@@ -1,17 +1,22 @@
 use std::io::Error;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
+use std::sync::{Arc, Mutex};
 
 use crate::connection::Connection;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Peer {
     address: SocketAddr,
+    connections: Arc<Mutex<Vec<Connection>>>,
 }
 
 impl Peer {
     pub fn new(address: SocketAddr) -> Self {
-        Self { address }
+        Self {
+            address,
+            connections: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -45,6 +50,11 @@ impl Peer {
                             eprintln!("Failed to send hello to peer: {}", e);
                         } else {
                             println!("Sent Hello frame to {}", peer_address);
+                            
+                            // Own the connection
+                            if let Ok(mut conns) = peer_clone.connections.lock() {
+                                conns.push(connection);
+                            }
                         }
                     }
                     Err(e) => {
@@ -55,7 +65,7 @@ impl Peer {
         });
     }
 
-    pub fn initiate_connection(&self, target: SocketAddr) -> Result<(), Error> {
+    pub fn connect(&self, target: SocketAddr) -> Result<(), Error> {
         println!("Initiating connection to remote peer: {}", target);
         let stream = TcpStream::connect(target)?;
 
@@ -69,6 +79,11 @@ impl Peer {
         let payload = format!("hello from initiator on {}", local_port).into_bytes();
         connection.send_hello(payload)?;
         println!("Sent Hello frame to {}", target);
+
+        // Own the connection
+        if let Ok(mut conns) = self.connections.lock() {
+            conns.push(connection);
+        }
 
         Ok(())
     }

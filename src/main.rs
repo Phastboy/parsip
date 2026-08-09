@@ -6,7 +6,6 @@ use std::net::{Ipv4Addr, SocketAddr};
 mod protocol;
 mod peer;
 mod connection;
-mod transport;
 
 use peer::Peer;
 
@@ -31,7 +30,7 @@ fn main() -> Result<(), Error> {
     // 4. Connect to remote peer if provided
     if let Some(target_str) = args.get(2) {
         if let Ok(target) = target_str.parse::<SocketAddr>() {
-            peer.initiate_connection(target)?;
+            peer.connect(target)?;
         } else {
             eprintln!("Invalid target address format. Expected IP:PORT");
         }
