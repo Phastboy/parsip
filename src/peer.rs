@@ -1,34 +1,32 @@
 use std::io::Error;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 
-pub trait Server {
-    fn listen(&self) -> Result<TcpListener, Error>;
-    fn accept(&self, listener: &TcpListener) -> Result<(TcpStream, SocketAddr), Error>;
-}
-
 #[derive(Debug, Clone)]
 pub struct Peer {
-    address: String,
+    address: SocketAddr,
 }
 
 impl Peer {
-    pub fn new(address: String) -> Self {
+    pub fn new(address: SocketAddr) -> Self {
         Self { address }
     }
 
-    pub fn address(&self) -> &str {
-        &self.address
-    }
-}
-
-impl Server for Peer {
-    fn listen(&self) -> Result<TcpListener, Error> {
-        let listener = TcpListener::bind(&self.address)?;
-        Ok(listener)
+    pub fn address(&self) -> SocketAddr {
+        self.address
     }
 
-    fn accept(&self, listener: &TcpListener) -> Result<(TcpStream, SocketAddr), Error> {
-        let (stream, addr) = listener.accept()?;
-        Ok((stream, addr))
+    pub fn listen(&self) -> Result<TcpListener, Error> {
+        TcpListener::bind(self.address)
+    }
+
+    pub fn accept(
+        &self,
+        listener: &TcpListener,
+    ) -> Result<(TcpStream, SocketAddr), Error> {
+        listener.accept()
+    }
+
+    pub fn connect(&self, address: SocketAddr) -> Result<TcpStream, Error> {
+        TcpStream::connect(address)
     }
 }
