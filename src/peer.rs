@@ -7,11 +7,11 @@ pub trait Server {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParsipServer {
+pub struct Peer {
     address: String,
 }
 
-impl ParsipServer {
+impl Peer {
     pub fn new(address: String) -> Self {
         Self { address }
     }
@@ -21,7 +21,7 @@ impl ParsipServer {
     }
 }
 
-impl Server for ParsipServer {
+impl Server for Peer {
     fn listen(&self) -> Result<TcpListener, Error> {
         let listener = TcpListener::bind(&self.address)?;
         Ok(listener)
