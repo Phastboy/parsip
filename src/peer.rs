@@ -2,20 +2,24 @@ use std::io::Error;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 use crate::connection::Connection;
+use crate::identity::PeerId;
 
 #[derive(Clone)]
 pub struct Peer {
+    pub id: PeerId,
     address: SocketAddr,
-    connections: Arc<Mutex<Vec<Connection>>>,
+    connections: Arc<Mutex<HashMap<PeerId, Connection>>>,
 }
 
 impl Peer {
-    pub fn new(address: SocketAddr) -> Self {
+    pub fn new(id: PeerId, address: SocketAddr) -> Self {
         Self {
+            id,
             address,
-            connections: Arc::new(Mutex::new(Vec::new())),
+            connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -37,24 +41,26 @@ impl Peer {
                         
                         let mut connection = Connection::new(stream, peer_address);
                         
-                        // Start reading on a background thread
+                        // 1. Synchronous Handshake
+                        let their_id = match connection.handshake(peer_clone.id.clone()) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                eprintln!("Handshake failed with {}: {}", peer_address, e);
+                                continue;
+                            }
+                        };
+                        
+                        println!("Handshake successful! Remote peer is {:?}", their_id);
+
+                        // 2. Start background reader
                         if let Err(e) = connection.start_read_loop() {
-                            eprintln!("Failed to start read loop: {}", e);
+                            eprintln!("Failed to start read loop for {:?}: {}", their_id, e);
                             continue;
                         }
 
-                        // Immediately write a HELLO frame
-                        let local_port = peer_clone.address().port();
-                        let payload = format!("hello from acceptor on {}", local_port).into_bytes();
-                        if let Err(e) = connection.send_hello(payload) {
-                            eprintln!("Failed to send hello to peer: {}", e);
-                        } else {
-                            println!("Sent Hello frame to {}", peer_address);
-                            
-                            // Own the connection
-                            if let Ok(mut conns) = peer_clone.connections.lock() {
-                                conns.push(connection);
-                            }
+                        // 3. Register the connection by PeerId
+                        if let Ok(mut conns) = peer_clone.connections.lock() {
+                            conns.insert(their_id, connection);
                         }
                     }
                     Err(e) => {
@@ -71,18 +77,16 @@ impl Peer {
 
         let mut connection = Connection::new(stream, target);
 
-        // Start reading on a background thread
+        // 1. Synchronous Handshake
+        let their_id = connection.handshake(self.id.clone())?;
+        println!("Handshake successful! Remote peer is {:?}", their_id);
+
+        // 2. Start background reader
         connection.start_read_loop()?;
 
-        // Immediately write a HELLO frame
-        let local_port = self.address().port();
-        let payload = format!("hello from initiator on {}", local_port).into_bytes();
-        connection.send_hello(payload)?;
-        println!("Sent Hello frame to {}", target);
-
-        // Own the connection
+        // 3. Register the connection by PeerId
         if let Ok(mut conns) = self.connections.lock() {
-            conns.push(connection);
+            conns.insert(their_id, connection);
         }
 
         Ok(())

@@ -6,8 +6,10 @@ use std::net::{Ipv4Addr, SocketAddr};
 mod protocol;
 mod peer;
 mod connection;
+mod identity;
 
 use peer::Peer;
+use identity::PeerId;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +21,8 @@ fn main() -> Result<(), Error> {
         
     // 2. Setup Peer
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, listen_port));
-    let peer = Peer::new(address);
+    let peer_id = PeerId::load_or_generate(listen_port);
+    let peer = Peer::new(peer_id, address);
     let listener = peer.listen()?;
 
     println!("Peer listening on {}", peer.address());
