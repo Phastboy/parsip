@@ -2,8 +2,7 @@ use std::io::Error;
 use std::net::{SocketAddr, TcpStream};
 use std::thread;
 
-use crate::protocol::{Encoder, Frame, LengthPrefixCodec, MessageType};
-use crate::transport;
+use crate::protocol::{Decoder, Encoder, Frame, LengthPrefixCodec, MessageType};
 
 pub struct Connection {
     remote_addr: SocketAddr,
@@ -23,11 +22,30 @@ impl Connection {
     }
 
     pub fn start_read_loop(&self) -> Result<(), Error> {
-        let read_stream = self.stream.try_clone()?;
+        let mut read_stream = self.stream.try_clone()?;
         let peer_addr = self.remote_addr;
 
         thread::spawn(move || {
-            transport::handle_connection(read_stream, peer_addr);
+            let mut codec = LengthPrefixCodec;
+
+            loop {
+                match codec.decode(&mut read_stream) {
+                    Ok(Some(frame)) => {
+                        let text = String::from_utf8_lossy(&frame.payload);
+                        println!("Received frame:");
+                        println!("    type: {:?}", frame.message_type);
+                        println!("    payload: {}", text);
+                    }
+                    Ok(None) => {
+                        println!("Peer {} disconnected cleanly.", peer_addr);
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading frame from {}: {}", peer_addr, e);
+                        break;
+                    }
+                }
+            }
         });
 
         Ok(())
