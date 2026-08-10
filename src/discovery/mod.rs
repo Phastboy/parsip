@@ -59,7 +59,9 @@ impl Discovery {
                                         payload.extend_from_slice(&tcp_listen_port.to_be_bytes());
                                         payload.extend_from_slice(&my_id.to_bytes());
                                         payload.extend_from_slice(my_nickname.as_bytes());
-                                        let _ = socket_clone.send_to(&payload, src);
+                                        let mut reply_addr = src;
+                                        reply_addr.set_port(DISCOVERY_PORT);
+                                        let _ = socket_clone.send_to(&payload, reply_addr);
                                     }
 
                                     let mut target_addr = src;
