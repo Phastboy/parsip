@@ -1,7 +1,6 @@
-use std::fs;
 use crate::peer::{Peer, PeerEvent};
 use crate::protocol::Message;
-use crate::fs_dir::{shared_dir, downloads_dir};
+use crate::fs_dir::downloads_dir;
 
 pub fn handle_event(peer: &Peer, store: &crate::resource::LocalResourceStore, event: PeerEvent) {
     match event {
