@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use crate::peer::{Peer, PeerEvent};
@@ -110,7 +109,7 @@ pub fn handle_event(
 }
 
 use std::sync::mpsc::Sender;
-use crate::daemon::control::{ControlMessage, ControlResponse, DiscoveredPeerInfo, ConnectedPeerInfo, ResourceInfo as CtrlResourceInfo};
+use crate::daemon::control::{ControlMessage, ControlResponse, ConnectedPeerInfo, ResourceInfo as CtrlResourceInfo};
 
 fn handle_control(
     config: &crate::config::Config,
@@ -206,7 +205,7 @@ fn handle_control(
             };
             let p = PathBuf::from(expanded_path);
             match store.add_resource(p) {
-                Ok((id, info)) => {
+                Ok((id, _info)) => {
                     let alias = aliases.add_resource(id.clone());
                     let _ = sender.send(ControlResponse::ResourceAdded { alias, id });
                 }
