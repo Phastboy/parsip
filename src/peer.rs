@@ -14,6 +14,7 @@ pub enum PeerEvent {
     NewConnection(PeerId),
     Disconnected(PeerId),
     Message(PeerId, Frame),
+    Discovered(PeerId, SocketAddr),
 }
 
 #[derive(Clone)]
@@ -22,7 +23,7 @@ pub struct Peer {
     pub id: PeerId,
     address: SocketAddr,
     manager: ConnectionManager,
-    event_tx: Sender<PeerEvent>,
+    pub event_tx: Sender<PeerEvent>,
 }
 
 impl Peer {
@@ -41,6 +42,10 @@ impl Peer {
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    pub fn is_connected(&self, peer_id: &PeerId) -> bool {
+        self.manager.is_connected(peer_id)
     }
 
     pub fn send(&self, target: &PeerId, frame: &Frame) -> Result<(), Error> {
