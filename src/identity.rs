@@ -19,6 +19,14 @@ impl PeerId {
         bytes.copy_from_slice(&digest);
         Self(bytes)
     }
+
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
 }
 
 impl std::fmt::Debug for PeerId {
