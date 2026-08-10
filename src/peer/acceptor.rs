@@ -10,7 +10,7 @@ use crate::peer::{Peer, PeerEvent};
 
 impl Peer {
     pub(crate) fn register_connection(&self, stream: TcpStream, remote_addr: SocketAddr, direction: Direction) -> Result<PeerId, Error> {
-        let mut connection = Connection::new(stream, remote_addr);
+        let (mut connection, reader) = Connection::new(stream, remote_addr)?;
 
         let their_id = connection.handshake(&self.identity)?;
 
@@ -20,9 +20,6 @@ impl Peer {
 
         let conn_id = self.manager.reserve_id();
         let died_before_insert = Arc::new(AtomicBool::new(false));
-
-        let read_stream = connection.stream.try_clone()?;
-        let peer_addr = connection.remote_addr;
 
         // Attempt deduplicated insert FIRST. If this fails (tie-breaker drops it),
         // we return an error, and the connection drops cleanly without spawning the read loop.
@@ -43,7 +40,7 @@ impl Peer {
         let tx_clone = self.event_tx.clone();
         let peer_id_for_loop = their_id.clone();
 
-        Connection::start_read_loop(read_stream, peer_addr, tx_clone, peer_id_for_loop, move || {
+        reader.start_read_loop(tx_clone, peer_id_for_loop, move || {
             died_flag.store(true, Ordering::SeqCst);
             manager_for_cleanup.remove_if_current(&cleanup_id, conn_id);
         });
