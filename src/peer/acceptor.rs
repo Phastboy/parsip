@@ -1,7 +1,6 @@
 use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::thread;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{Error, ErrorKind};
 
 use crate::connection::{Connection, Direction};
@@ -10,39 +9,42 @@ use crate::peer::{Peer, PeerEvent};
 
 impl Peer {
     pub(crate) fn register_connection(&self, stream: TcpStream, remote_addr: SocketAddr, direction: Direction) -> Result<PeerId, Error> {
-        let (mut connection, reader) = Connection::new(stream, remote_addr)?;
+        let (connection, reader) = Connection::new(stream, remote_addr)?;
+        let connection_arc = Arc::new(std::sync::Mutex::new(connection));
 
-        let their_id = connection.handshake(&self.identity)?;
+        let conn_id = self.manager.insert_pending(connection_arc.clone(), direction)?;
+
+        let handshake_result = {
+            let mut conn = connection_arc.lock().unwrap();
+            conn.handshake(&self.identity)
+        };
+
+        let their_id = match handshake_result {
+            Ok(id) => id,
+            Err(e) => {
+                self.manager.remove(conn_id);
+                return Err(e);
+            }
+        };
 
         if their_id == self.id {
+            self.manager.remove(conn_id);
             return Err(Error::new(ErrorKind::InvalidData, "Rejected self-connection"));
         }
 
-        let conn_id = self.manager.reserve_id();
-        let died_before_insert = Arc::new(AtomicBool::new(false));
-
-        // Attempt deduplicated insert FIRST. If this fails (tie-breaker drops it),
-        // we return an error, and the connection drops cleanly without spawning the read loop.
-        self.manager.insert_deduplicated(
-            self.id.clone(),
-            their_id.clone(),
-            conn_id,
-            connection,
-            direction,
-            &died_before_insert,
-        )?;
+        if let Err(e) = self.manager.promote_to_established(conn_id, &self.id, their_id.clone()) {
+            // manager already dropped our connection if it threw an error
+            return Err(e);
+        }
 
         // If we reach here, we survived deduplication and the connection is officially registered.
         let manager_for_cleanup = self.manager.clone();
-        let cleanup_id = their_id.clone();
-        let died_flag = died_before_insert.clone();
         
         let tx_clone = self.event_tx.clone();
         let peer_id_for_loop = their_id.clone();
 
         reader.start_read_loop(tx_clone, peer_id_for_loop, move || {
-            died_flag.store(true, Ordering::SeqCst);
-            manager_for_cleanup.remove_if_current(&cleanup_id, conn_id);
+            manager_for_cleanup.remove(conn_id);
         });
 
         let _ = self.event_tx.send(PeerEvent::NewConnection(their_id.clone()));
