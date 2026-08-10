@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::connection::{Connection, Direction};
 use crate::identity::PeerId;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ConnectionState {
     Handshaking,
@@ -13,6 +14,7 @@ pub enum ConnectionState {
     Closing,
 }
 
+#[allow(dead_code)]
 pub struct ConnectionEntry {
     pub id: u64,
     pub peer_id: Option<PeerId>,
