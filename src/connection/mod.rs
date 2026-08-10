@@ -26,6 +26,7 @@ pub struct ConnectionReader {
 
 impl Connection {
     pub fn new(stream: TcpStream, remote_addr: SocketAddr) -> Result<(Self, ConnectionReader), Error> {
+        let _ = stream.set_nonblocking(false);
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
         
