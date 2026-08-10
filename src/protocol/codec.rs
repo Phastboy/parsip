@@ -1,41 +1,7 @@
 use std::io::{Error, ErrorKind, Read, Write};
+use crate::protocol::frame::Frame;
 
-const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024; // 16MB, tune as needed
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MessageType {
-    Hello = 1,
-    HelloProof = 2,
-    ListResources = 3,
-    GetResource = 4,
-}
-
-impl TryFrom<u8> for MessageType {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(MessageType::Hello),
-            2 => Ok(MessageType::HelloProof),
-            3 => Ok(MessageType::ListResources),
-            4 => Ok(MessageType::GetResource),
-            _ => Err(Error::new(ErrorKind::InvalidData, format!("Unknown message type: {}", value))),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Frame {
-    pub message_type: MessageType,
-    pub payload: Vec<u8>,
-}
-
-impl Frame {
-    pub fn new(message_type: MessageType, payload: Vec<u8>) -> Self {
-        Self { message_type, payload }
-    }
-}
+const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024; // 16MB
 
 pub trait Encoder<Item> {
     fn encode(&mut self, item: &Item, stream: &mut impl Write) -> Result<(), Error>;
@@ -52,7 +18,7 @@ impl Encoder<Frame> for LengthPrefixCodec {
     fn encode(&mut self, item: &Frame, stream: &mut impl Write) -> Result<(), Error> {
         let length = (1 + item.payload.len()) as u32;
         stream.write_all(&length.to_be_bytes())?;
-        stream.write_all(&[item.message_type as u8])?;
+        stream.write_all(&[item.message_type])?;
         stream.write_all(&item.payload)?;
         Ok(())
     }
@@ -83,7 +49,7 @@ impl Decoder for LengthPrefixCodec {
         let mut body = vec![0u8; frame_length];
         stream.read_exact(&mut body)?;
 
-        let message_type = MessageType::try_from(body[0])?;
+        let message_type = body[0];
         let payload = body[1..].to_vec();
 
         Ok(Some(Frame { message_type, payload }))
