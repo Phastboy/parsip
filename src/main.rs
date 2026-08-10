@@ -18,23 +18,55 @@ mod resource;
 use peer::Peer;
 use identity::Identity;
 use discovery::Discovery;
-use fs_dir::{shared_dir, downloads_dir};
+use fs_dir::{default_shared_dir, default_downloads_dir};
 use event_handler::handle_event;
+use std::path::PathBuf;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
 
-    let listen_port: u16 = args.get(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9000);
+    let mut listen_port: u16 = 9000;
+    let mut connect_target: Option<SocketAddr> = None;
+    let mut shared_dir_path = default_shared_dir();
+    let mut downloads_dir_path = default_downloads_dir();
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--shared" => {
+                if i + 1 < args.len() {
+                    shared_dir_path = PathBuf::from(&args[i + 1]);
+                    i += 1;
+                }
+            }
+            "--downloads" => {
+                if i + 1 < args.len() {
+                    downloads_dir_path = PathBuf::from(&args[i + 1]);
+                    i += 1;
+                }
+            }
+            arg if i == 1 => {
+                if let Ok(p) = arg.parse::<u16>() {
+                    listen_port = p;
+                }
+            }
+            arg if i == 2 => {
+                if let Ok(addr) = arg.parse::<SocketAddr>() {
+                    connect_target = Some(addr);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, listen_port));
     let identity = Identity::load_or_generate();
     let (peer, event_rx) = Peer::new(identity, address);
     let listener = peer.listen()?;
 
-    let _ = fs::create_dir_all(shared_dir());
-    let _ = fs::create_dir_all(downloads_dir());
+    let _ = fs::create_dir_all(&shared_dir_path);
+    let _ = fs::create_dir_all(&downloads_dir_path);
 
     println!("Peer listening on {}", peer.address());
 
@@ -44,24 +76,19 @@ fn main() -> Result<(), Error> {
         eprintln!("Warning: Failed to start local discovery: {}", e);
     }
 
-    if let Some(target_str) = args.get(2) {
-        match target_str.parse::<SocketAddr>() {
-            Ok(target) => {
-                let rx = peer.connect(target);
-                thread::spawn(move || {
-                    match rx.recv() {
-                        Ok(Ok(peer_id)) => println!("Connected to {:?}", peer_id),
-                        Ok(Err(e)) => eprintln!("Connection to {} failed: {}", target, e),
-                        Err(_) => eprintln!("Connection attempt to {} was dropped unexpectedly", target),
-                    }
-                });
+    if let Some(target) = connect_target {
+        let rx = peer.connect(target);
+        thread::spawn(move || {
+            match rx.recv() {
+                Ok(Ok(peer_id)) => println!("Connected to {:?}", peer_id),
+                Ok(Err(e)) => eprintln!("Connection to {} failed: {}", target, e),
+                Err(_) => eprintln!("Connection attempt to {} was dropped unexpectedly", target),
             }
-            Err(_) => eprintln!("Invalid target address format. Expected IP:PORT"),
-        }
+        });
     }
 
-    let mut resource_store = resource::LocalResourceStore::new(shared_dir());
-    let mut download_mgr = resource::DownloadManager::new();
+    let mut resource_store = resource::LocalResourceStore::new(shared_dir_path);
+    let mut download_mgr = resource::DownloadManager::new(downloads_dir_path);
     let mut aliases = event_handler::AliasRegistry::new();
 
     let tx_clone = peer.event_tx.clone();
