@@ -1,5 +1,9 @@
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ResourceId(pub [u8; 32]);
+
 #[derive(Debug, Clone)]
 pub struct ResourceInfo {
+    pub id: ResourceId,
     pub name: String,
     pub size: u64,
 }
@@ -10,8 +14,8 @@ pub enum Message {
     HelloProof { signature: [u8; 64] },
     ListResources,
     ResourceList { resources: Vec<ResourceInfo> },
-    GetResource { name: String },
-    ResourceData { name: String, data: Vec<u8> },
+    GetChunk { id: ResourceId, offset: u64, length: u32 },
+    ResourceChunk { id: ResourceId, offset: u64, data: Vec<u8> },
 }
 
 impl Message {
@@ -21,8 +25,8 @@ impl Message {
             Message::HelloProof { .. } => 2,
             Message::ListResources => 3,
             Message::ResourceList { .. } => 4,
-            Message::GetResource { .. } => 5,
-            Message::ResourceData { .. } => 6,
+            Message::GetChunk { .. } => 5,
+            Message::ResourceChunk { .. } => 6,
         }
     }
 }

@@ -18,6 +18,7 @@ impl Into<Frame> for &Message {
                 let mut p = Vec::new();
                 p.extend_from_slice(&(resources.len() as u32).to_be_bytes());
                 for r in resources {
+                    p.extend_from_slice(&r.id.0); // 32 bytes
                     let name_bytes = r.name.as_bytes();
                     p.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
                     p.extend_from_slice(name_bytes);
@@ -25,12 +26,17 @@ impl Into<Frame> for &Message {
                 }
                 p
             }
-            Message::GetResource { name } => name.as_bytes().to_vec(),
-            Message::ResourceData { name, data } => {
-                let name_bytes = name.as_bytes();
-                let mut p = Vec::with_capacity(4 + name_bytes.len() + data.len());
-                p.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
-                p.extend_from_slice(name_bytes);
+            Message::GetChunk { id, offset, length } => {
+                let mut p = Vec::with_capacity(32 + 8 + 4);
+                p.extend_from_slice(&id.0);
+                p.extend_from_slice(&offset.to_be_bytes());
+                p.extend_from_slice(&length.to_be_bytes());
+                p
+            }
+            Message::ResourceChunk { id, offset, data } => {
+                let mut p = Vec::with_capacity(32 + 8 + data.len());
+                p.extend_from_slice(&id.0);
+                p.extend_from_slice(&offset.to_be_bytes());
                 p.extend_from_slice(data);
                 p
             }
