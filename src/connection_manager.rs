@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use crate::connection::{Connection, Direction};
 use crate::identity::PeerId;
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ConnectionState {
     Handshaking,
@@ -14,9 +13,7 @@ pub enum ConnectionState {
     Closing,
 }
 
-#[allow(dead_code)]
 pub struct ConnectionEntry {
-    pub id: u64,
     pub peer_id: Option<PeerId>,
     pub direction: Direction,
     pub connection: Arc<Mutex<Connection>>,
@@ -42,7 +39,6 @@ impl ConnectionManager {
     pub fn insert_pending(&self, connection: Arc<Mutex<Connection>>, direction: Direction) -> Result<u64, Error> {
         let conn_id = self.reserve_id();
         let entry = ConnectionEntry {
-            id: conn_id,
             peer_id: None,
             direction,
             connection,
@@ -62,7 +58,8 @@ impl ConnectionManager {
 
     pub fn remove(&self, conn_id: u64) {
         if let Ok(mut entries) = self.entries.lock() {
-            if let Some(entry) = entries.remove(&conn_id) {
+            if let Some(mut entry) = entries.remove(&conn_id) {
+                entry.state = ConnectionState::Closing;
                 if let Some(peer_id) = entry.peer_id {
                     if let Ok(mut index) = self.peer_index.lock() {
                         if matches!(index.get(&peer_id), Some(&id) if id == conn_id) {
