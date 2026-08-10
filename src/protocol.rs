@@ -1,5 +1,7 @@
 use std::io::{Error, ErrorKind, Read, Write};
 
+const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageType {
@@ -56,7 +58,7 @@ impl Encoder<Frame> for LengthPrefixCodec {
 
 impl Decoder for LengthPrefixCodec {
     type Item = Frame;
-    
+
     fn decode(&mut self, stream: &mut impl Read) -> Result<Option<Self::Item>, Error> {
         let mut length_buffer = [0u8; 4];
 
@@ -68,9 +70,12 @@ impl Decoder for LengthPrefixCodec {
         }
 
         let frame_length = u32::from_be_bytes(length_buffer) as usize;
-        
+
         if frame_length == 0 {
             return Err(Error::new(ErrorKind::InvalidData, "Frame length must be at least 1 byte (for the type)"));
+        }
+        if frame_length > MAX_FRAME_SIZE {
+            return Err(Error::new(ErrorKind::InvalidData, format!("Frame too large: {} bytes", frame_length)));
         }
 
         let mut body = vec![0u8; frame_length];
