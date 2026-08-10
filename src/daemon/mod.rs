@@ -1,13 +1,12 @@
 pub mod control;
 
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::io::{Error, BufReader, BufRead, Write};
 use std::thread;
 
 use crate::config::Config;
 use crate::peer::Peer;
 use crate::identity::Identity;
-use crate::discovery::Discovery;
 use crate::event_handler::{handle_event, AliasRegistry};
 use crate::resource::{LocalResourceStore, DownloadManager};
 use crate::request_tracker::RequestTracker;
@@ -32,7 +31,11 @@ pub fn run(config: Config) -> Result<(), Error> {
     // Start Control TCP Server (127.0.0.1:9091)
     let control_listener = TcpListener::bind("127.0.0.1:9091")?;
     info!("Control API listening on 127.0.0.1:9091");
-    
+
+    if let Err(e) = crate::discovery::Discovery::start(config.listen_port, peer.id.clone(), config.nickname.clone(), peer.event_tx.clone()) {
+        error!("Failed to start local discovery listener: {}", e);
+    }
+
     let tx_clone = peer.event_tx.clone();
     thread::spawn(move || {
         for stream in control_listener.incoming() {
@@ -61,7 +64,7 @@ pub fn run(config: Config) -> Result<(), Error> {
     });
 
     for event in event_rx.iter() {
-        handle_event(&peer, &mut resource_store, &mut download_mgr, &mut aliases, &mut request_tracker, event);
+        handle_event(&config, &peer, &mut resource_store, &mut download_mgr, &mut aliases, &mut request_tracker, event);
     }
     
     Ok(())

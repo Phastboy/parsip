@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::fs;
-use std::io::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -45,19 +44,5 @@ impl Config {
         }
         
         Self::default()
-    }
-    
-    pub fn save(&self) -> Result<(), Error> {
-        let base = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let parsip_dir = base.join(".parsip");
-        fs::create_dir_all(&parsip_dir)?;
-        
-        let config_path = parsip_dir.join("config.toml");
-        if let Ok(content) = toml::to_string(self) {
-            fs::write(config_path, content)?;
-        }
-        Ok(())
     }
 }

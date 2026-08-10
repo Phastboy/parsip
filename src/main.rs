@@ -1,8 +1,10 @@
 use std::io::Error;
 use std::env;
-use std::thread;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
+use log::{error, LevelFilter};
+use simplelog::{WriteLogger, Config as LogConfig};
 use std::fs;
+use std::fs::File;
 
 mod protocol;
 mod peer;
@@ -17,15 +19,6 @@ mod resource;
 mod request_tracker;
 mod daemon;
 mod cli;
-
-use peer::Peer;
-use identity::Identity;
-use discovery::Discovery;
-use event_handler::handle_event;
-use std::path::PathBuf;
-use log::{info, error, LevelFilter};
-use simplelog::{WriteLogger, Config as LogConfig};
-use std::fs::File;
 
 fn main() -> Result<(), Error> {
     let mut config = config::Config::load();
