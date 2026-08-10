@@ -9,6 +9,7 @@ pub struct Config {
     pub shared_dir: PathBuf,
     pub downloads_dir: PathBuf,
     pub log_file: PathBuf,
+    pub nickname: String,
 }
 
 impl Default for Config {
@@ -23,6 +24,7 @@ impl Default for Config {
             shared_dir: parsip_dir.join("shared"),
             downloads_dir: parsip_dir.join("downloads"),
             log_file: parsip_dir.join("parsip.log"),
+            nickname: "Anonymous".to_string(),
         }
     }
 }

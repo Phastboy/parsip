@@ -7,10 +7,10 @@ use crate::protocol::{ResourceInfo, Message, message::types::ResourceId};
 use crate::identity::PeerId;
 
 pub struct AliasRegistry {
-    peer_aliases: HashMap<String, PeerId>,
+    pub peer_aliases: HashMap<String, PeerId>,
     resource_aliases: HashMap<String, ResourceId>,
     resource_info: HashMap<ResourceId, ResourceInfo>,
-    discovered_peers: std::collections::HashSet<PeerId>,
+    pub discovered_peers: HashMap<PeerId, crate::daemon::control::DiscoveredPeerInfo>,
     next_peer_id: u32,
     next_resource_id: u32,
 }
@@ -21,7 +21,7 @@ impl AliasRegistry {
             peer_aliases: HashMap::new(),
             resource_aliases: HashMap::new(),
             resource_info: HashMap::new(),
-            discovered_peers: std::collections::HashSet::new(),
+            discovered_peers: HashMap::new(),
             next_peer_id: 1,
             next_resource_id: 1,
         }
@@ -66,6 +66,7 @@ impl AliasRegistry {
 }
 
 pub fn handle_event(
+    config: &crate::config::Config,
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
@@ -74,10 +75,16 @@ pub fn handle_event(
     event: PeerEvent
 ) {
     match event {
-        PeerEvent::Discovered(peer_id, addr) => {
-            if aliases.discovered_peers.insert(peer_id.clone()) {
+        PeerEvent::Discovered(peer_id, addr, nickname) => {
+            let alias = aliases.add_peer(peer_id.clone());
+            if !aliases.discovered_peers.contains_key(&peer_id) {
+                aliases.discovered_peers.insert(peer_id.clone(), crate::daemon::control::DiscoveredPeerInfo {
+                    alias: alias.clone(),
+                    nickname: nickname.clone(),
+                    address: addr,
+                });
                 if !peer.is_connected(&peer_id) {
-                    println!("[Discovery] Found peer {:?} at {} (not auto-connecting)", peer_id, addr);
+                    println!("[Discovery] Found peer {:?} at {} (alias: {}, nickname: {})", peer_id, addr, alias, nickname);
                 }
             }
         }
@@ -89,7 +96,16 @@ pub fn handle_event(
             println!("[Event] Peer {:?} disconnected", peer_id);
         }
         PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, aliases, req_tracker, peer_id, msg),
-        PeerEvent::ControlRequest(cmd, sender) => handle_control(peer, store, download_mgr, aliases, req_tracker, cmd, sender),
+        PeerEvent::ControlRequest(cmd, sender) => handle_control(config, peer, store, download_mgr, aliases, req_tracker, cmd, sender),
+        PeerEvent::ScanTimeout(req_id) => {
+            if let Some(sender) = req_tracker.complete(req_id) {
+                let mut results = Vec::new();
+                for (_, info) in &aliases.discovered_peers {
+                    results.push(info.clone());
+                }
+                let _ = sender.send(ControlResponse::ScanResults(results));
+            }
+        }
     }
 }
 
@@ -97,6 +113,7 @@ use std::sync::mpsc::Sender;
 use crate::daemon::control::{ControlMessage, ControlResponse, DiscoveredPeerInfo, ConnectedPeerInfo, ResourceInfo as CtrlResourceInfo};
 
 fn handle_control(
+    config: &crate::config::Config,
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
@@ -107,12 +124,32 @@ fn handle_control(
 ) {
     match cmd {
         ControlMessage::Scan => {
-            // For now, we return empty until JIT Discovery is implemented in Phase 6
-            let _ = sender.send(ControlResponse::ScanResults(vec![]));
+            aliases.discovered_peers.clear();
+            let req_id = req_tracker.next_id();
+            req_tracker.register(req_id, sender);
+            
+            if let Err(e) = crate::discovery::Discovery::broadcast_scan(config.listen_port, &peer.id, &config.nickname) {
+                if let Some(s) = req_tracker.complete(req_id) {
+                    let _ = s.send(ControlResponse::Error(format!("Failed to broadcast: {}", e)));
+                }
+                return;
+            }
+
+            let event_tx = peer.event_tx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = event_tx.send(PeerEvent::ScanTimeout(req_id));
+            });
         }
         ControlMessage::Connect { alias } => {
-            // we don't have a persistent discovery registry yet, so this will fail for now unless we implement JIT discovery.
-            let _ = sender.send(ControlResponse::Error("Connect requires JIT discovery (Phase 6)".to_string()));
+            // Find peer by alias in discovered_peers
+            if let Some(info) = aliases.discovered_peers.values().find(|info| info.alias == alias) {
+                let addr = info.address;
+                let _ = peer.connect(addr);
+                let _ = sender.send(ControlResponse::Ok);
+            } else {
+                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", alias)));
+            }
         }
         ControlMessage::ListPeers => {
             let mut connected = Vec::new();
