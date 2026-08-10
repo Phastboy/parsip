@@ -13,15 +13,15 @@ use identity::PeerId;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
-    
+
     // 1. Parse listen port
     let listen_port: u16 = args.get(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(9000);
-        
+
     // 2. Setup Peer
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, listen_port));
-    let peer_id = PeerId::load_or_generate(listen_port);
+    let peer_id = PeerId::load_or_generate();
     let peer = Peer::new(peer_id, address);
     let listener = peer.listen()?;
 
@@ -30,12 +30,20 @@ fn main() -> Result<(), Error> {
     // 3. Start background acceptor
     peer.start_accept_loop(listener);
 
-    // 4. Connect to remote peer if provided
+    // 4. Connect to remote peer if provided (non-blocking; failure surfaces async)
     if let Some(target_str) = args.get(2) {
-        if let Ok(target) = target_str.parse::<SocketAddr>() {
-            peer.connect(target)?;
-        } else {
-            eprintln!("Invalid target address format. Expected IP:PORT");
+        match target_str.parse::<SocketAddr>() {
+            Ok(target) => {
+                let rx = peer.connect(target);
+                thread::spawn(move || {
+                    match rx.recv() {
+                        Ok(Ok(peer_id)) => println!("Connected to {:?}", peer_id),
+                        Ok(Err(e)) => eprintln!("Connection to {} failed: {}", target, e),
+                        Err(_) => eprintln!("Connection attempt to {} was dropped unexpectedly", target),
+                    }
+                });
+            }
+            Err(_) => eprintln!("Invalid target address format. Expected IP:PORT"),
         }
     }
 
