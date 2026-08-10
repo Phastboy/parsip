@@ -1,42 +1,62 @@
 # Parsip Architecture
 
-Parsip is a decentralized, peer-to-peer resource-sharing protocol. This document outlines its architectural foundations.
+Parsip is a decentralized, peer-to-peer resource-sharing protocol. This document outlines its architectural foundations and the boundaries of its core abstractions.
 
-## 1. Unified Peer Architecture
-Unlike traditional client/server web architectures, Parsip does not rely on a central server. Every Parsip instance is a **Peer**. 
+## 1. Core Abstractions & Responsibilities
 
-A Peer acts as both:
-- **Acceptor**: Listens for incoming connections from other peers on a background thread.
-- **Initiator**: Connects out to other peers.
+To avoid accumulating technical debt as the protocol expands, Parsip strictly separates the concerns of identity, transport, and routing.
 
-By running the listener on a separate `std::thread`, a single Parsip binary can concurrently handle an infinite number of incoming connections while independently making outgoing connections.
+### The `Peer` (The Node)
+The `Peer` represents the **logical participant** in the network. A Peer is *not* a server or a client—it is an independent node that can simultaneously listen, connect, request, and serve.
 
-## 2. Framing and Protocol Boundaries
-TCP provides a continuous byte stream, not discrete messages. Parsip implements a strict framing protocol to break this stream into manageable chunks.
+**Responsibilities:**
+- **Identity Ownership**: Holds the cryptographic `PeerId` that permanently identifies this node across network and IP changes.
+- **Connection Lifecycle Management**: Tracks all active relationships in a `HashMap<PeerId, Connection>`. Handles peer deduplication, disconnections, and stale-cleanup races.
+- **Routing & Orchestration**: Decides *what* to send and to *whom*. (e.g., `send(PeerB, Frame)`).
+- **Resource Management**: (Future) Owns the resource store and handles incoming `ListResources` and `GetResource` requests.
 
-### The Wire Format
-Every frame sent over the network follows the **Option B** design (Length = Type + Payload):
-```text
-┌────────────┬──────────┬──────────────────┐
-│ 4B length  │ 1B type  │ N bytes payload  │
-└────────────┴──────────┴──────────────────┘
-```
+### The `Connection` (The Transport)
+The `Connection` represents a **single bidirectional TCP link** between this node and one specific remote peer.
 
-**Why Option B?**
-By making the 4-byte header describe the *entire* remaining frame body (type + payload), the low-level framing codec (`LengthPrefixCodec`) can remain completely agnostic to the application protocol. It simply reads `N` bytes and passes an opaque byte array upwards.
+**Responsibilities:**
+- **I/O Mechanics**: Wraps the raw `TcpStream`. Exposes clean read/write primitives to the `Peer`.
+- **Concurrency**: Manages the split between the background reading thread and the foreground writing mechanisms.
+- **Handshaking**: Executes the synchronous cryptographic handshake upon establishment to prove identity before any application data is exchanged.
+- **Framing**: Uses the codec layer to translate between raw byte streams and structured protocol frames.
 
-### Codec Layer
-The network boundary is guarded by traits:
-- `Encoder`: Takes a `Frame` and writes the exact bytes to the stream.
-- `Decoder`: Uses `read_exact` to read the 4-byte header, allocates the exact buffer needed, and blocks until the full frame arrives. Any mid-frame disconnect automatically results in an `UnexpectedEof` error, preventing corrupted or partial state.
+### The `Protocol` (The Semantics)
+The `Protocol` dictates the **meaning** of the bytes traversing a `Connection`. 
 
-### Message Types
-The single byte immediately following the length header denotes the message semantics. 
-```rust
-pub enum MessageType {
-    Hello = 1,
-    ListResources = 2,
-    GetResource = 3,
-}
-```
-This enum strictly bounds the application logic, ensuring that any unrecognized byte (e.g., `255`) is rejected as a protocol error immediately by `TryFrom<u8>`.
+**Responsibilities:**
+- Defines the `[4B length][1B type][N bytes payload]` Option B framing structure.
+- Distinctly separates **Control Messages** (e.g., `Hello`, `Ping`, `Pong`) from **Resource Messages** (e.g., `ListResources`, `GetResource`).
+
+---
+
+## 2. The Identity Model
+
+A network endpoint (`SocketAddr` like `192.168.0.2:9000`) is transient. A Parsip identity (`PeerId`) is permanent.
+
+- **Storage**: Identities are persisted locally (e.g., `~/.parsip/identity.key`) so a peer remains the same logical participant across restarts, IP changes, and NATs.
+- **Authentication**: While currently a randomly generated `[u8; 32]`, the `PeerId` is designed to evolve into a public key hash (`hash(public_key)`), allowing the `Connection` handshake to cryptographically authenticate peers.
+
+---
+
+## 3. The Protocol Lifecycle Progression
+
+Parsip is being built according to the following evolutionary stages:
+
+### Stage 1: Identity
+Establishing the `PeerId` structure and persistence.
+
+### Stage 2: Connection Identity
+Performing synchronous handshakes to prove identity upon TCP connection, resulting in a `HashMap<PeerId, Connection>`.
+
+### Stage 3: Peer Lifecycle
+Handling the complex realities of networking: disconnects, reconnects, duplicate connections, and avoiding stale-cleanup races when managing the connection pool.
+
+### Stage 4: Peer-to-Peer Messaging
+Exposing clean primitives on the `Peer` to route frames to specific `PeerId`s asynchronously.
+
+### Stage 5: Resource Protocol
+Finally layering on the actual semantic purpose of Parsip: sharing resources via `LIST_RESOURCES`, `GET_RESOURCE`, and `RESOURCE_DATA`.
