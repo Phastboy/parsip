@@ -8,6 +8,7 @@ pub enum PeerEvent {
     NewConnection(PeerId),
     Disconnected(PeerId),
     Message(PeerId, Message),
-    Discovered(PeerId, SocketAddr),
+    Discovered(PeerId, SocketAddr, String), // Added nickname
     ControlRequest(ControlMessage, Sender<ControlResponse>),
+    ScanTimeout(u32),
 }
