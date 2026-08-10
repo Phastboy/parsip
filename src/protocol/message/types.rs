@@ -12,10 +12,10 @@ pub struct ResourceInfo {
 pub enum Message {
     Hello { public_key: [u8; 32], nonce: [u8; 32] },
     HelloProof { signature: [u8; 64] },
-    ListResources,
-    ResourceList { resources: Vec<ResourceInfo> },
-    GetChunk { id: ResourceId, offset: u64, length: u32 },
-    ResourceChunk { id: ResourceId, offset: u64, data: Vec<u8> },
+    ListResources { request_id: u32 },
+    ResourceList { request_id: u32, resources: Vec<ResourceInfo> },
+    GetChunk { request_id: u32, id: ResourceId, offset: u64, length: u32 },
+    ResourceChunk { request_id: u32, id: ResourceId, offset: u64, data: Vec<u8> },
 }
 
 impl Message {
@@ -23,7 +23,7 @@ impl Message {
         match self {
             Message::Hello { .. } => 1,
             Message::HelloProof { .. } => 2,
-            Message::ListResources => 3,
+            Message::ListResources { .. } => 3,
             Message::ResourceList { .. } => 4,
             Message::GetChunk { .. } => 5,
             Message::ResourceChunk { .. } => 6,

@@ -13,9 +13,14 @@ impl Into<Frame> for &Message {
                 p
             }
             Message::HelloProof { signature } => signature.to_vec(),
-            Message::ListResources => vec![],
-            Message::ResourceList { resources } => {
+            Message::ListResources { request_id } => {
+                let mut p = Vec::with_capacity(4);
+                p.extend_from_slice(&request_id.to_be_bytes());
+                p
+            }
+            Message::ResourceList { request_id, resources } => {
                 let mut p = Vec::new();
+                p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&(resources.len() as u32).to_be_bytes());
                 for r in resources {
                     p.extend_from_slice(&r.id.0); // 32 bytes
@@ -26,15 +31,17 @@ impl Into<Frame> for &Message {
                 }
                 p
             }
-            Message::GetChunk { id, offset, length } => {
-                let mut p = Vec::with_capacity(32 + 8 + 4);
+            Message::GetChunk { request_id, id, offset, length } => {
+                let mut p = Vec::with_capacity(4 + 32 + 8 + 4);
+                p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&id.0);
                 p.extend_from_slice(&offset.to_be_bytes());
                 p.extend_from_slice(&length.to_be_bytes());
                 p
             }
-            Message::ResourceChunk { id, offset, data } => {
-                let mut p = Vec::with_capacity(32 + 8 + data.len());
+            Message::ResourceChunk { request_id, id, offset, data } => {
+                let mut p = Vec::with_capacity(4 + 32 + 8 + data.len());
+                p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&id.0);
                 p.extend_from_slice(&offset.to_be_bytes());
                 p.extend_from_slice(data);

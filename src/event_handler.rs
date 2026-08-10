@@ -129,7 +129,7 @@ fn handle_command(
                 return;
             }
             if let Some(peer_id) = aliases.get_peer(parts[1]) {
-                let _ = peer.send(&peer_id, &Message::ListResources);
+                let _ = peer.send(&peer_id, &Message::ListResources { request_id: 0 });
                 println!("Requested resource list from {}", parts[1]);
             } else {
                 println!("Unknown peer alias: {}", parts[1]);
@@ -146,7 +146,7 @@ fn handle_command(
                         let chunk_size = 32 * 1024;
                         if let Ok(()) = download_mgr.start_download(&info, chunk_size) {
                             if let Some((offset, length)) = download_mgr.get_next_request(&res_id) {
-                                let _ = peer.send(&peer_id, &Message::GetChunk { id: res_id.clone(), offset, length });
+                                let _ = peer.send(&peer_id, &Message::GetChunk { request_id: 0, id: res_id.clone(), offset, length });
                                 println!("Started downloading {} from {}", parts[2], parts[1]);
                             }
                         } else {
@@ -201,12 +201,12 @@ fn handle_message(
     msg: Message
 ) {
     match msg {
-        Message::ListResources => {
-            println!("[Protocol] Peer {:?} requested ListResources", peer_id);
+        Message::ListResources { request_id } => {
+            println!("[Protocol] Peer {:?} requested ListResources (req_id: {})", peer_id, request_id);
             let resources = store.list_resources();
-            let _ = peer.send(&peer_id, &Message::ResourceList { resources });
+            let _ = peer.send(&peer_id, &Message::ResourceList { request_id, resources });
         }
-        Message::ResourceList { resources } => {
+        Message::ResourceList { request_id, resources } => {
             let alias = aliases.add_peer(peer_id.clone());
             println!("[Protocol] Received resources from {}:", alias);
             for res in &resources {
@@ -216,7 +216,7 @@ fn handle_message(
                 println!(" - {} ({} bytes, id: {:?}, alias: {})", res.name, res.size, res.id, r_alias);
             }
         }
-        Message::GetChunk { id, offset, length } => {
+        Message::GetChunk { request_id, id, offset, length } => {
             if let Some(file_path) = store.get_path(&id) {
                 use std::io::{Seek, SeekFrom, Read};
                 if let Ok(mut file) = std::fs::File::open(file_path) {
@@ -225,6 +225,7 @@ fn handle_message(
                         if let Ok(bytes_read) = file.read(&mut buffer) {
                             buffer.truncate(bytes_read);
                             let _ = peer.send(&peer_id, &Message::ResourceChunk { 
+                                request_id,
                                 id, 
                                 offset, 
                                 data: buffer 
@@ -234,7 +235,7 @@ fn handle_message(
                 }
             }
         }
-        Message::ResourceChunk { id, offset, data } => {
+        Message::ResourceChunk { request_id, id, offset, data } => {
             match download_mgr.process_chunk(&id, offset, &data) {
                 Ok(true) => {
                     if let Ok(()) = download_mgr.complete_download(&id) {
@@ -243,7 +244,7 @@ fn handle_message(
                 }
                 Ok(false) => {
                     if let Some((next_offset, length)) = download_mgr.get_next_request(&id) {
-                        let _ = peer.send(&peer_id, &Message::GetChunk { id, offset: next_offset, length });
+                        let _ = peer.send(&peer_id, &Message::GetChunk { request_id, id, offset: next_offset, length });
                     }
                 }
                 Err(e) => {
