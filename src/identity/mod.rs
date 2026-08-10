@@ -1,44 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use sha2::{Digest, Sha256};
-
+use ed25519_dalek::{Signature, Signer, SigningKey};
 use crate::random::random_bytes_32;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct PeerId([u8; 32]);
+pub mod peer_id;
+pub use peer_id::PeerId;
 
-impl PeerId {
-    /// Derives a PeerId deterministically from a public key: PeerId = SHA-256(pubkey).
-    pub fn from_public_key(vk: &VerifyingKey) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(vk.as_bytes());
-        let digest = hasher.finalize();
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&digest);
-        Self(bytes)
-    }
-
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0
-    }
-
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-}
-
-impl std::fmt::Debug for PeerId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let hex_str = hex::encode(self.0);
-        write!(f, "PeerId({}..{})", &hex_str[..4], &hex_str[60..])
-    }
-}
-
-/// A node's persistent cryptographic identity: a signing keypair plus the
-/// PeerId derived from its public key. The private key never leaves this
-/// struct; other code only ever sees the PeerId or asks Identity to sign.
 pub struct Identity {
     signing_key: SigningKey,
     pub peer_id: PeerId,
@@ -52,9 +20,6 @@ impl Identity {
         base.join(".parsip").join("identity")
     }
 
-    /// Loads the node's persistent identity (a 32-byte ed25519 seed) from
-    /// disk, or generates and persists a new one. Independent of listen
-    /// port/address.
     pub fn load_or_generate() -> Self {
         let path = Self::identity_path();
 
