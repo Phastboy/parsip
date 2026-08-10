@@ -8,6 +8,12 @@ use std::io::Error;
 use crate::identity::PeerId;
 use crate::protocol::{Encoder, Frame, LengthPrefixCodec};
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Direction {
+    Incoming,
+    Outgoing,
+}
+
 pub struct Connection {
     pub(crate) remote_addr: SocketAddr,
     pub remote_peer_id: Option<PeerId>,
