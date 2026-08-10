@@ -7,18 +7,21 @@ use std::sync::mpsc::{self, Receiver};
 
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
-use crate::identity::PeerId;
+use crate::identity::{Identity, PeerId};
 
 #[derive(Clone)]
 pub struct Peer {
+    identity: Arc<Identity>,
     pub id: PeerId,
     address: SocketAddr,
     manager: ConnectionManager,
 }
 
 impl Peer {
-    pub fn new(id: PeerId, address: SocketAddr) -> Self {
+    pub fn new(identity: Identity, address: SocketAddr) -> Self {
+        let id = identity.peer_id.clone();
         Self {
+            identity: Arc::new(identity),
             id,
             address,
             manager: ConnectionManager::new(),
@@ -33,12 +36,10 @@ impl Peer {
         TcpListener::bind(self.address)
     }
 
-    /// Shared handshake + registration path for both inbound and outbound connections.
-    /// Peer owns identity/orchestration; ConnectionManager owns the registry itself.
     fn register_connection(&self, stream: TcpStream, remote_addr: SocketAddr) -> Result<PeerId, Error> {
         let mut connection = Connection::new(stream, remote_addr);
 
-        let their_id = connection.handshake(self.id.clone())?;
+        let their_id = connection.handshake(&self.identity)?;
 
         if their_id == self.id {
             return Err(Error::new(ErrorKind::InvalidData, "Rejected self-connection"));

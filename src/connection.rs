@@ -3,8 +3,11 @@ use std::net::{SocketAddr, TcpStream};
 use std::thread;
 use std::time::Duration;
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+use crate::identity::{Identity, PeerId};
 use crate::protocol::{Decoder, Encoder, Frame, LengthPrefixCodec, MessageType};
-use crate::identity::PeerId;
+use crate::random::random_bytes_32;
 
 pub struct Connection {
     remote_addr: SocketAddr,
@@ -19,34 +22,70 @@ impl Connection {
         Self { remote_addr, remote_peer_id: None, stream }
     }
 
-    pub fn handshake(&mut self, my_id: PeerId) -> Result<PeerId, Error> {
+    /// Authenticated handshake (see PROTOCOL.md):
+    ///
+    /// 1. Both sides send Hello { public_key, nonce } and read the peer's Hello.
+    /// 2. Both sides sign the nonce THEY RECEIVED and send it as HelloProof.
+    /// 3. Both sides verify the incoming HelloProof against the peer's public
+    ///    key and the nonce THEY SENT.
+    ///
+    /// A verification failure is currently treated the same as any other
+    /// handshake error (connection closed, logged) — this is a natural
+    /// extension point later for a distinguished "security-relevant" event
+    /// (e.g. blocklisting), but that policy decision is deliberately out of
+    /// scope for now.
+    pub fn handshake(&mut self, identity: &Identity) -> Result<PeerId, Error> {
         let mut codec = LengthPrefixCodec;
 
-        // 1. Send my ID
-        let payload = my_id.to_bytes().to_vec();
-        let frame = Frame::new(MessageType::Hello, payload);
-        codec.encode(&frame, &mut self.stream)?;
+        // --- Step 1: exchange Hello { public_key(32) || nonce(32) } ---
+        let my_nonce = random_bytes_32();
 
-        // 2. Read their ID
-        match codec.decode(&mut self.stream)? {
-            Some(frame) => {
-                if frame.message_type == MessageType::Hello && frame.payload.len() == 32 {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&frame.payload);
-                    let their_id = PeerId::from_bytes(bytes);
-                    self.remote_peer_id = Some(their_id.clone());
-                    Ok(their_id)
-                } else {
-                    Err(Error::new(ErrorKind::InvalidData, "Invalid handshake frame"))
-                }
-            }
-            None => Err(Error::new(ErrorKind::ConnectionAborted, "Peer disconnected during handshake"))
-        }
+        let mut hello_payload = Vec::with_capacity(64);
+        hello_payload.extend_from_slice(&identity.public_key_bytes());
+        hello_payload.extend_from_slice(&my_nonce);
+        codec.encode(&Frame::new(MessageType::Hello, hello_payload), &mut self.stream)?;
+
+        let their_hello = match codec.decode(&mut self.stream)? {
+            Some(frame) if frame.message_type == MessageType::Hello && frame.payload.len() == 64 => frame,
+            Some(_) => return Err(Error::new(ErrorKind::InvalidData, "Invalid Hello frame")),
+            None => return Err(Error::new(ErrorKind::ConnectionAborted, "Peer disconnected during handshake")),
+        };
+
+        let mut their_pubkey_bytes = [0u8; 32];
+        their_pubkey_bytes.copy_from_slice(&their_hello.payload[0..32]);
+        let mut their_nonce = [0u8; 32];
+        their_nonce.copy_from_slice(&their_hello.payload[32..64]);
+
+        let their_verifying_key = VerifyingKey::from_bytes(&their_pubkey_bytes)
+            .map_err(|_| Error::new(ErrorKind::InvalidData, "Invalid public key in Hello"))?;
+        let their_id = PeerId::from_public_key(&their_verifying_key);
+
+        // --- Step 2: sign the nonce we just received, exchange HelloProof ---
+        let my_signature = identity.sign(&their_nonce);
+        codec.encode(
+            &Frame::new(MessageType::HelloProof, my_signature.to_bytes().to_vec()),
+            &mut self.stream,
+        )?;
+
+        let their_proof = match codec.decode(&mut self.stream)? {
+            Some(frame) if frame.message_type == MessageType::HelloProof && frame.payload.len() == 64 => frame,
+            Some(_) => return Err(Error::new(ErrorKind::InvalidData, "Invalid HelloProof frame")),
+            None => return Err(Error::new(ErrorKind::ConnectionAborted, "Peer disconnected during proof exchange")),
+        };
+
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes.copy_from_slice(&their_proof.payload);
+        let their_signature = Signature::from_bytes(&sig_bytes);
+
+        // --- Step 3: verify their signature over the nonce WE sent ---
+        their_verifying_key
+            .verify(&my_nonce, &their_signature)
+            .map_err(|_| Error::new(ErrorKind::InvalidData, "Handshake signature verification failed"))?;
+
+        self.remote_peer_id = Some(their_id.clone());
+        Ok(their_id)
     }
 
-    /// Starts the background read loop. `on_disconnect` is called exactly once,
-    /// when the loop exits (clean disconnect or read error), so the caller can
-    /// remove this connection from any shared registry.
     pub fn start_read_loop<F>(&self, on_disconnect: F) -> Result<(), Error>
     where
         F: FnOnce() + Send + 'static,
@@ -60,6 +99,16 @@ impl Connection {
             loop {
                 match codec.decode(&mut read_stream) {
                     Ok(Some(frame)) => {
+                        if frame.message_type == MessageType::Hello
+                            || frame.message_type == MessageType::HelloProof
+                        {
+                            eprintln!(
+                                "Protocol violation from {}: unexpected handshake message in Established phase, closing",
+                                peer_addr
+                            );
+                            break;
+                        }
+
                         let text = String::from_utf8_lossy(&frame.payload);
                         println!("Received frame:");
                         println!("    type: {:?}", frame.message_type);
@@ -70,7 +119,6 @@ impl Connection {
                         break;
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                        // No data within the read timeout window — not a real error, keep polling.
                         continue;
                     }
                     Err(e) => {
