@@ -3,12 +3,11 @@ use std::thread;
 
 use crate::identity::PeerId;
 use crate::protocol::{Decoder, LengthPrefixCodec, Message};
-use crate::connection::Connection;
+use crate::connection::ConnectionReader;
 
-impl Connection {
+impl ConnectionReader {
     pub fn start_read_loop<F>(
-        mut read_stream: std::net::TcpStream,
-        peer_addr: std::net::SocketAddr,
+        mut self,
         event_tx: std::sync::mpsc::Sender<crate::peer::PeerEvent>,
         peer_id: PeerId,
         on_disconnect: F
@@ -16,12 +15,13 @@ impl Connection {
     where
         F: FnOnce() + Send + 'static,
     {
+        let peer_addr = self.remote_addr;
 
         thread::spawn(move || {
             let mut codec = LengthPrefixCodec;
 
             loop {
-                match codec.decode(&mut read_stream) {
+                match codec.decode(&mut self.stream) {
                     Ok(Some(frame)) => {
                         match Message::try_from(frame) {
                             Ok(msg) => match msg {

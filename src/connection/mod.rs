@@ -15,16 +15,26 @@ pub enum Direction {
 }
 
 pub struct Connection {
-    pub(crate) remote_addr: SocketAddr,
     pub remote_peer_id: Option<PeerId>,
     pub(crate) stream: TcpStream,
 }
 
+pub struct ConnectionReader {
+    pub(crate) stream: TcpStream,
+    pub(crate) remote_addr: SocketAddr,
+}
+
 impl Connection {
-    pub fn new(stream: TcpStream, remote_addr: SocketAddr) -> Self {
+    pub fn new(stream: TcpStream, remote_addr: SocketAddr) -> Result<(Self, ConnectionReader), Error> {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
-        Self { remote_addr, remote_peer_id: None, stream }
+        
+        let read_stream = stream.try_clone()?;
+        
+        let writer = Self { remote_peer_id: None, stream };
+        let reader = ConnectionReader { stream: read_stream, remote_addr };
+        
+        Ok((writer, reader))
     }
 
     pub fn send(&mut self, frame: &Frame) -> Result<(), Error> {
