@@ -66,4 +66,12 @@ impl ConnectionManager {
         }
         Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))
     }
+
+    pub fn is_connected(&self, peer_id: &PeerId) -> bool {
+        if let Ok(conns) = self.connections.lock() {
+            conns.contains_key(peer_id)
+        } else {
+            false
+        }
+    }
 }
