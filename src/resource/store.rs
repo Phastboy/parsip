@@ -7,7 +7,7 @@ use crate::protocol::{ResourceInfo, message::types::ResourceId};
 
 #[derive(Clone)]
 pub struct LocalResourceStore {
-    shared_dir: PathBuf,
+    _shared_dir: PathBuf,
     index: HashMap<ResourceId, (PathBuf, ResourceInfo)>,
 }
 
@@ -45,7 +45,7 @@ impl LocalResourceStore {
             }
         }
         
-        Self { shared_dir, index }
+        Self { _shared_dir: shared_dir, index }
     }
 
     pub fn list_resources(&self) -> Vec<ResourceInfo> {
