@@ -144,22 +144,30 @@ impl ConnectionManager {
     }
 
     pub fn send(&self, peer_id: &PeerId, message: &crate::protocol::Message) -> Result<(), Error> {
-        let conn_id = {
+        let conn_arc = {
             let index = self.peer_index.lock()
                 .map_err(|_| Error::new(ErrorKind::Other, "peer_index lock poisoned"))?;
-            index.get(peer_id).copied()
+            let conn_id = index.get(peer_id).copied();
+
+            if let Some(id) = conn_id {
+                let mut entries = self.entries.lock()
+                    .map_err(|_| Error::new(ErrorKind::Other, "entries lock poisoned"))?;
+                if let Some(entry) = entries.get_mut(&id) {
+                    Some(entry.connection.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         };
 
-        if let Some(id) = conn_id {
-            if let Ok(mut entries) = self.entries.lock() {
-                if let Some(entry) = entries.get_mut(&id) {
-                    if let Ok(mut conn) = entry.connection.lock() {
-                        let frame: crate::protocol::Frame = message.into();
-                        return conn.send(&frame);
-                    }
-                }
-            }
+        if let Some(conn_arc) = conn_arc {
+            let mut conn = conn_arc.lock().map_err(|_| Error::new(ErrorKind::Other, "connection lock poisoned"))?;
+            let frame: crate::protocol::Frame = message.into();
+            return conn.send(&frame);
         }
+        
         Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))
     }
 

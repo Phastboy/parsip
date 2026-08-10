@@ -9,6 +9,58 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     }
 
     let cmd_str = args[1].as_str();
+
+    if cmd_str == "config" {
+        if args.len() < 3 {
+            println!("Usage: parsip config <show|set> [key] [value]");
+            return Ok(());
+        }
+        let mut config = crate::config::Config::load();
+        
+        match args[2].as_str() {
+            "show" => {
+                println!("Nickname: {}", config.nickname);
+                println!("Shared Dir: {}", config.shared_dir.display());
+                println!("Downloads Dir: {}", config.downloads_dir.display());
+                println!("Listen Port: {}", config.listen_port);
+                println!("Log File: {}", config.log_file.display());
+            }
+            "set" => {
+                if args.len() < 5 {
+                    println!("Usage: parsip config set <key> <value>");
+                    return Ok(());
+                }
+                let key = args[3].as_str();
+                let val = args[4].clone();
+                match key {
+                    "nickname" => config.nickname = val,
+                    "shared" | "shared_dir" => config.shared_dir = std::path::PathBuf::from(val),
+                    "downloads" | "downloads_dir" => config.downloads_dir = std::path::PathBuf::from(val),
+                    "port" | "listen_port" => {
+                        if let Ok(p) = val.parse::<u16>() {
+                            config.listen_port = p;
+                        } else {
+                            println!("Invalid port number.");
+                            return Ok(());
+                        }
+                    }
+                    _ => {
+                        println!("Unknown config key: {}", key);
+                        return Ok(());
+                    }
+                }
+                if let Err(e) = config.save() {
+                    eprintln!("Failed to save config: {}", e);
+                } else {
+                    println!("Configuration updated.");
+                }
+            }
+            _ => {
+                println!("Usage: parsip config <show|set> [key] [value]");
+            }
+        }
+        return Ok(());
+    }
     let msg = match cmd_str {
         "scan" => ControlMessage::Scan,
         "peers" => ControlMessage::ListPeers,
@@ -98,7 +150,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 println!("No resources available.");
             } else {
                 for r in resources {
-                    println!(" - {} ({} bytes, id: {:?}, alias: {})", r.name, r.size, r.id, r.alias);
+                    println!("  {:<4} {:<30} {}", r.alias, r.name, format_size(r.size));
                 }
             }
         }
@@ -108,4 +160,21 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn format_size(bytes: u64) -> String {
+    let kb = 1024_f64;
+    let mb = kb * 1024_f64;
+    let gb = mb * 1024_f64;
+
+    let b = bytes as f64;
+    if b >= gb {
+        format!("{:.2} GB", b / gb)
+    } else if b >= mb {
+        format!("{:.2} MB", b / mb)
+    } else if b >= kb {
+        format!("{:.2} KB", b / kb)
+    } else {
+        format!("{} bytes", bytes)
+    }
 }

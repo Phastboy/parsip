@@ -45,4 +45,19 @@ impl Config {
         
         Self::default()
     }
+
+    pub fn save(&self) -> Result<(), std::io::Error> {
+        let base = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let parsip_dir = base.join(".parsip");
+        std::fs::create_dir_all(&parsip_dir)?;
+        
+        let config_path = parsip_dir.join("config.toml");
+        let content = toml::to_string(self).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        
+        fs::write(config_path, content)
+    }
 }
