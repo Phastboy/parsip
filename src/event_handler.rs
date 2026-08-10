@@ -176,6 +176,7 @@ fn handle_control(
                     if let Some(info) = aliases.get_info(&res_id) {
                         if let Ok(()) = download_mgr.start_download(&info) {
                             let request_id = req_tracker.next_id();
+                            req_tracker.register(request_id, sender);
                             transfer_mgr.register(crate::resource::Transfer {
                                 request_id,
                                 peer_id: peer_id.clone(),
@@ -183,9 +184,9 @@ fn handle_control(
                                 is_download: true,
                                 bytes_transferred: 0,
                                 bytes_total: info.size,
+                                start_time: std::time::Instant::now(),
                             });
                             let _ = peer.send(&peer_id, &Message::DownloadResource { request_id, id: res_id.clone() });
-                            let _ = sender.send(ControlResponse::Ok);
                         } else {
                             let _ = sender.send(ControlResponse::Error("Failed to start download".to_string()));
                         }
@@ -303,7 +304,15 @@ fn handle_message(
         Message::ResourceEnd { request_id, id } => {
             if let Ok(()) = download_mgr.complete_download(&id) {
                 if let Some(t) = transfer_mgr.complete(request_id) {
-                    println!("[Protocol] Download complete for {:?} ({} bytes)", id, t.bytes_total);
+                    let elapsed_secs = t.start_time.elapsed().as_secs_f64();
+                    println!("[Protocol] Download complete for {:?} ({} bytes)", id, t.bytes_transferred);
+                    
+                    if let Some(sender) = req_tracker.complete(request_id) {
+                        let _ = sender.send(ControlResponse::DownloadComplete { 
+                            bytes: t.bytes_transferred, 
+                            elapsed_secs 
+                        });
+                    }
                 } else {
                     println!("[Protocol] Download complete for {:?}", id);
                 }
