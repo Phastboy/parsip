@@ -24,6 +24,10 @@ impl RequestTracker {
         self.pending_requests.insert(request_id, sender);
     }
 
+    pub fn get(&self, request_id: u32) -> Option<&Sender<ControlResponse>> {
+        self.pending_requests.get(&request_id)
+    }
+
     pub fn complete(&mut self, request_id: u32) -> Option<Sender<ControlResponse>> {
         self.pending_requests.remove(&request_id)
     }

@@ -113,58 +113,75 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     stream.write_all(format!("{}\n", req_json).as_bytes())?;
 
     let mut reader = BufReader::new(stream);
-    let mut resp_line = String::new();
-    reader.read_line(&mut resp_line)?;
+    
+    loop {
+        let mut resp_line = String::new();
+        if reader.read_line(&mut resp_line).is_err() || resp_line.is_empty() {
+            break;
+        }
 
-    if resp_line.is_empty() {
-        return Err(Error::new(ErrorKind::ConnectionAborted, "Daemon closed connection"));
-    }
+        let resp: ControlResponse = serde_json::from_str(&resp_line)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
-    let resp: ControlResponse = serde_json::from_str(&resp_line)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-
-    match resp {
-        ControlResponse::Ok => println!("Success"),
-        ControlResponse::Error(err) => eprintln!("Error: {}", err),
-        ControlResponse::ScanResults(results) => {
-            if results.is_empty() {
-                println!("No peers discovered.");
-            } else {
-                for r in results {
-                    println!("  {}: {} ({})", r.alias, r.nickname, r.address);
-                }
+        match resp {
+            ControlResponse::Ok => {
+                println!("Success");
+                break;
             }
-        }
-        ControlResponse::PeersList(peers) => {
-            if peers.is_empty() {
-                println!("No connected peers.");
-            } else {
-                println!("Connected Peers:");
-                for p in peers {
-                    println!("  {} -> {:?}", p.alias, p.peer_id);
-                }
+            ControlResponse::Error(err) => {
+                eprintln!("Error: {}", err);
+                break;
             }
-        }
-        ControlResponse::ResourceList(resources) => {
-            if resources.is_empty() {
-                println!("No resources available.");
-            } else {
-                for r in resources {
-                    println!("  {:<4} {:<30} {}", r.alias, r.name, format_size(r.size));
+            ControlResponse::ScanResults(results) => {
+                if results.is_empty() {
+                    println!("No peers discovered.");
+                } else {
+                    for r in results {
+                        println!("  {}: {} ({})", r.alias, r.nickname, r.address);
+                    }
                 }
+                break;
             }
-        }
-        ControlResponse::ResourceAdded { alias, id } => {
-            println!("Added resource -> {:?} (alias: {})", id, alias);
-        }
-        ControlResponse::DownloadComplete { bytes, elapsed_secs } => {
-            let mb = bytes as f64 / 1_000_000.0;
-            let mb_per_sec = if elapsed_secs > 0.0 {
-                mb / elapsed_secs
-            } else {
-                0.0
-            };
-            println!("Downloaded {} in {:.2}s ({:.2} MB/s)", format_size(bytes), elapsed_secs, mb_per_sec);
+            ControlResponse::PeersList(peers) => {
+                if peers.is_empty() {
+                    println!("No connected peers.");
+                } else {
+                    println!("Connected Peers:");
+                    for p in peers {
+                        println!("  {} -> {:?}", p.alias, p.peer_id);
+                    }
+                }
+                break;
+            }
+            ControlResponse::ResourceList(resources) => {
+                if resources.is_empty() {
+                    println!("No resources available.");
+                } else {
+                    for r in resources {
+                        println!("  {:<4} {:<30} {}", r.alias, r.name, format_size(r.size));
+                    }
+                }
+                break;
+            }
+            ControlResponse::ResourceAdded { alias, id } => {
+                println!("Added resource -> {:?} (alias: {})", id, alias);
+                break;
+            }
+            ControlResponse::DownloadProgress { bytes, total, mbps } => {
+                use std::io::Write;
+                print!("\rDownloading... {} / {} ({:.2} MB/s)", format_size(bytes), format_size(total), mbps);
+                let _ = std::io::stdout().flush();
+            }
+            ControlResponse::DownloadComplete { bytes, elapsed_secs } => {
+                let mb = bytes as f64 / 1_000_000.0;
+                let mb_per_sec = if elapsed_secs > 0.0 {
+                    mb / elapsed_secs
+                } else {
+                    0.0
+                };
+                println!("\nDownloaded {} in {:.2}s ({:.2} MB/s)", format_size(bytes), elapsed_secs, mb_per_sec);
+                break;
+            }
         }
     }
 

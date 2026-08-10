@@ -185,6 +185,8 @@ fn handle_control(
                                 bytes_transferred: 0,
                                 bytes_total: info.size,
                                 start_time: std::time::Instant::now(),
+                                last_report_time: std::time::Instant::now(),
+                                last_report_bytes: 0,
                             });
                             let _ = peer.send(&peer_id, &Message::DownloadResource { request_id, id: res_id.clone() });
                         } else {
@@ -265,7 +267,7 @@ fn handle_message(
                 std::thread::spawn(move || {
                     use std::io::Read;
                     if let Ok(mut file) = std::fs::File::open(file_path) {
-                        let mut buffer = vec![0u8; 32 * 1024];
+                        let mut buffer = vec![0u8; 128 * 1024];
                         let mut offset = 0u64;
                         loop {
                             match file.read(&mut buffer) {
@@ -298,7 +300,11 @@ fn handle_message(
         }
         Message::ResourceChunk { request_id, id, offset, data } => {
             if let Ok(_) = download_mgr.process_chunk(&id, offset, &data) {
-                transfer_mgr.update_progress(request_id, data.len() as u64);
+                if let Some((bytes, total, mbps)) = transfer_mgr.update_progress(request_id, data.len() as u64) {
+                    if let Some(sender) = req_tracker.get(request_id) {
+                        let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
+                    }
+                }
             }
         }
         Message::ResourceEnd { request_id, id } => {

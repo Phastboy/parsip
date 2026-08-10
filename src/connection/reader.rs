@@ -7,7 +7,7 @@ use crate::connection::ConnectionReader;
 
 impl ConnectionReader {
     pub fn start_read_loop<F>(
-        mut self,
+        self,
         event_tx: std::sync::mpsc::Sender<crate::peer::PeerEvent>,
         peer_id: PeerId,
         on_disconnect: F
@@ -19,9 +19,10 @@ impl ConnectionReader {
 
         thread::spawn(move || {
             let mut codec = LengthPrefixCodec;
+            let mut buf_reader = std::io::BufReader::with_capacity(64 * 1024, self.stream);
 
             loop {
-                match codec.decode(&mut self.stream) {
+                match codec.decode(&mut buf_reader) {
                     Ok(Some(frame)) => {
                         match Message::try_from(frame) {
                             Ok(msg) => match msg {
