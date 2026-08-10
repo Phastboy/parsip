@@ -22,6 +22,7 @@ pub enum ControlResponse {
     PeersList(Vec<ConnectedPeerInfo>),
     ResourceList(Vec<ResourceInfo>),
     ResourceAdded { alias: String, id: ResourceId },
+    DownloadProgress { bytes: u64, total: u64, mbps: f64 },
     DownloadComplete { bytes: u64, elapsed_secs: f64 },
 }
 

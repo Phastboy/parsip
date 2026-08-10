@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ use crate::protocol::{ResourceInfo, message::types::ResourceId};
 pub struct ActiveDownload {
     pub info: ResourceInfo,
     pub received_bytes: u64,
-    pub temp_file: File,
+    pub temp_file: std::io::BufWriter<File>,
     pub temp_path: PathBuf,
 }
 
@@ -40,7 +40,7 @@ impl DownloadManager {
         let download = ActiveDownload {
             info: info.clone(),
             received_bytes: 0,
-            temp_file,
+            temp_file: std::io::BufWriter::with_capacity(128 * 1024, temp_file),
             temp_path,
         };
 
@@ -73,9 +73,12 @@ impl DownloadManager {
 
 
     pub fn complete_download(&mut self, id: &ResourceId) -> Result<(), Error> {
-        if let Some(download) = self.downloads.remove(id) {
+        if let Some(mut download) = self.downloads.remove(id) {
+            use std::io::Write;
+            download.temp_file.flush()?;
+            
             let final_path = self.downloads_dir.join(&download.info.name);
-            std::fs::rename(&download.temp_path, &final_path)?;
+            fs::rename(download.temp_path, final_path)?;
             Ok(())
         } else {
             Err(Error::new(ErrorKind::NotFound, "Download not found"))
