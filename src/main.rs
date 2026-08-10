@@ -2,6 +2,7 @@ use std::io::Error;
 use std::env;
 use std::thread;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::fs;
 
 mod protocol;
 mod peer;
@@ -10,10 +11,15 @@ mod connection_manager;
 mod identity;
 mod random;
 mod discovery;
+mod fs_dir; // Note: 'fs' is a std mod, so I named the module fs_dir
+mod event_handler;
 
 use peer::Peer;
 use identity::Identity;
 use discovery::Discovery;
+use protocol::Message;
+use fs_dir::{shared_dir, downloads_dir};
+use event_handler::handle_event;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -27,11 +33,13 @@ fn main() -> Result<(), Error> {
     let (peer, event_rx) = Peer::new(identity, address);
     let listener = peer.listen()?;
 
+    let _ = fs::create_dir_all(shared_dir());
+    let _ = fs::create_dir_all(downloads_dir());
+
     println!("Peer listening on {}", peer.address());
 
     peer.start_accept_loop(listener);
 
-    // Start Local Discovery
     if let Err(e) = Discovery::start(listen_port, peer.id.clone(), peer.event_tx.clone()) {
         eprintln!("Warning: Failed to start local discovery: {}", e);
     }
@@ -45,9 +53,8 @@ fn main() -> Result<(), Error> {
                     match rx.recv() {
                         Ok(Ok(peer_id)) => {
                             println!("Connected to {:?}", peer_id);
-                            // Send a test ListResources frame to demonstrate bidirectional dispatch
-                            let frame = protocol::Frame::new(protocol::MessageType::ListResources, vec![]);
-                            if let Err(e) = peer_clone.send(&peer_id, &frame) {
+                            let msg = Message::ListResources;
+                            if let Err(e) = peer_clone.send(&peer_id, &msg) {
                                 eprintln!("Failed to send ListResources to {:?}: {}", peer_id, e);
                             }
                         }
@@ -62,36 +69,7 @@ fn main() -> Result<(), Error> {
 
     println!("Starting event loop...");
     for event in event_rx.iter() {
-        match event {
-            peer::PeerEvent::Discovered(peer_id, addr) => {
-                if !peer.is_connected(&peer_id) {
-                    println!("[Discovery] Found peer {:?} at {}, connecting...", peer_id, addr);
-                    let _ = peer.connect(addr);
-                }
-            }
-            peer::PeerEvent::NewConnection(peer_id) => {
-                println!("[Event] New connection established with {:?}", peer_id);
-            }
-            peer::PeerEvent::Disconnected(peer_id) => {
-                println!("[Event] Peer {:?} disconnected", peer_id);
-            }
-            peer::PeerEvent::Message(peer_id, frame) => {
-                let text = String::from_utf8_lossy(&frame.payload);
-                match frame.message_type {
-                    protocol::MessageType::ListResources => {
-                        println!("[Protocol] Peer {:?} requested ListResources", peer_id);
-                        // In the future, we will construct a ResourceInfo response and send it back
-                    }
-                    protocol::MessageType::GetResource => {
-                        println!("[Protocol] Peer {:?} requested GetResource: {}", peer_id, text);
-                    }
-                    _ => {
-                        println!("[Protocol] Received unhandled frame from {:?}: {:?}", peer_id, frame.message_type);
-                        println!("Payload: {}", text);
-                    }
-                }
-            }
-        }
+        handle_event(&peer, event);
     }
     
     Ok(())
