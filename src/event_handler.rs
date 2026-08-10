@@ -167,7 +167,15 @@ fn handle_command(
                 println!("Usage: add <file_path>");
                 return;
             }
-            let path = PathBuf::from(parts[1]);
+            let raw_path = parts[1];
+            let expanded_path = if raw_path.starts_with("~/") {
+                let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
+                raw_path.replacen("~", &home, 1)
+            } else {
+                raw_path.to_string()
+            };
+            
+            let path = PathBuf::from(expanded_path);
             match store.add_resource(path) {
                 Ok((id, info)) => {
                     let alias = aliases.add_resource(id.clone());
