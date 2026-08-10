@@ -3,6 +3,7 @@ use std::thread;
 use std::sync::mpsc::{self, Receiver};
 use std::io::Error;
 
+use crate::connection::Direction;
 use crate::identity::PeerId;
 use crate::peer::Peer;
 
@@ -23,7 +24,7 @@ impl Peer {
                 }
             };
 
-            match peer_clone.register_connection(stream, target) {
+            match peer_clone.register_connection(stream, target, Direction::Outgoing) {
                 Ok(peer_id) => {
                     let _ = tx.send(Ok(peer_id));
                 }
