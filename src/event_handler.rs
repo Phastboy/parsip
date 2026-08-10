@@ -10,6 +10,7 @@ pub struct AliasRegistry {
     peer_aliases: HashMap<String, PeerId>,
     resource_aliases: HashMap<String, ResourceId>,
     resource_info: HashMap<ResourceId, ResourceInfo>,
+    discovered_peers: std::collections::HashSet<PeerId>,
     next_peer_id: u32,
     next_resource_id: u32,
 }
@@ -20,6 +21,7 @@ impl AliasRegistry {
             peer_aliases: HashMap::new(),
             resource_aliases: HashMap::new(),
             resource_info: HashMap::new(),
+            discovered_peers: std::collections::HashSet::new(),
             next_peer_id: 1,
             next_resource_id: 1,
         }
@@ -72,8 +74,10 @@ pub fn handle_event(
 ) {
     match event {
         PeerEvent::Discovered(peer_id, addr) => {
-            if !peer.is_connected(&peer_id) {
-                println!("[Discovery] Found peer {:?} at {} (not auto-connecting)", peer_id, addr);
+            if aliases.discovered_peers.insert(peer_id.clone()) {
+                if !peer.is_connected(&peer_id) {
+                    println!("[Discovery] Found peer {:?} at {} (not auto-connecting)", peer_id, addr);
+                }
             }
         }
         PeerEvent::NewConnection(peer_id) => {
