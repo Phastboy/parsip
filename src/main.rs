@@ -18,7 +18,6 @@ mod resource;
 use peer::Peer;
 use identity::Identity;
 use discovery::Discovery;
-use protocol::Message;
 use fs_dir::{shared_dir, downloads_dir};
 use event_handler::handle_event;
 
@@ -49,16 +48,9 @@ fn main() -> Result<(), Error> {
         match target_str.parse::<SocketAddr>() {
             Ok(target) => {
                 let rx = peer.connect(target);
-                let peer_clone = peer.clone();
                 thread::spawn(move || {
                     match rx.recv() {
-                        Ok(Ok(peer_id)) => {
-                            println!("Connected to {:?}", peer_id);
-                            let msg = Message::ListResources;
-                            if let Err(e) = peer_clone.send(&peer_id, &msg) {
-                                eprintln!("Failed to send ListResources to {:?}: {}", peer_id, e);
-                            }
-                        }
+                        Ok(Ok(peer_id)) => println!("Connected to {:?}", peer_id),
                         Ok(Err(e)) => eprintln!("Connection to {} failed: {}", target, e),
                         Err(_) => eprintln!("Connection attempt to {} was dropped unexpectedly", target),
                     }
@@ -68,12 +60,29 @@ fn main() -> Result<(), Error> {
         }
     }
 
-    let resource_store = resource::LocalResourceStore::new(shared_dir());
+    let mut resource_store = resource::LocalResourceStore::new(shared_dir());
     let mut download_mgr = resource::DownloadManager::new();
+    let mut aliases = event_handler::AliasRegistry::new();
 
-    println!("Starting event loop...");
+    let tx_clone = peer.event_tx.clone();
+    thread::spawn(move || {
+        let stdin = std::io::stdin();
+        loop {
+            let mut line = String::new();
+            if stdin.read_line(&mut line).is_ok() {
+                let cmd = line.trim().to_string();
+                if !cmd.is_empty() {
+                    let _ = tx_clone.send(peer::PeerEvent::Command(cmd));
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    println!("Starting interactive event loop. Type 'connect', 'peers', 'list', 'get', 'add'...");
     for event in event_rx.iter() {
-        handle_event(&peer, &resource_store, &mut download_mgr, event);
+        handle_event(&peer, &mut resource_store, &mut download_mgr, &mut aliases, event);
     }
     
     Ok(())

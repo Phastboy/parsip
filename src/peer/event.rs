@@ -7,4 +7,5 @@ pub enum PeerEvent {
     Disconnected(PeerId),
     Message(PeerId, Message),
     Discovered(PeerId, SocketAddr),
+    Command(String),
 }
