@@ -78,8 +78,55 @@ fn main() -> Result<(), Error> {
     }
 
     if args.len() > 1 && args[1] == "start" {
-        // Phase 7: spawn daemon
-        println!("parsip start not implemented yet (Phase 7)");
+        let base = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let parsip_dir = base.join(".parsip");
+        let pid_file = parsip_dir.join("parsip.pid");
+        let log_file = parsip_dir.join("daemon_out.log");
+        let err_file = parsip_dir.join("daemon_err.log");
+
+        let stdout = File::create(log_file).unwrap();
+        let stderr = File::create(err_file).unwrap();
+
+        let daemonize = daemonize::Daemonize::new()
+            .pid_file(&pid_file)
+            .chown_pid_file(true)
+            .working_directory(base)
+            .stdout(stdout)
+            .stderr(stderr);
+
+        match daemonize.start() {
+            Ok(_) => {
+                println!("Starting parsip daemon in background...");
+                if let Err(e) = daemon::run(config) {
+                    error!("Daemon crashed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            Err(e) => eprintln!("Error, {}", e),
+        }
+        return Ok(());
+    }
+
+    if args.len() > 1 && args[1] == "stop" {
+        let base = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let pid_file = base.join(".parsip").join("parsip.pid");
+        
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                // Send SIGTERM to the pid using kill command (libc::kill is better but standard `kill` works)
+                let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+                println!("Stopped parsip daemon (PID: {})", pid);
+                let _ = std::fs::remove_file(pid_file);
+            } else {
+                eprintln!("Invalid PID file contents.");
+            }
+        } else {
+            println!("Daemon doesn't seem to be running (no parsip.pid found).");
+        }
         return Ok(());
     }
 
