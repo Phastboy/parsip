@@ -9,9 +9,11 @@ mod connection;
 mod connection_manager;
 mod identity;
 mod random;
+mod discovery;
 
 use peer::Peer;
 use identity::Identity;
+use discovery::Discovery;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -28,6 +30,11 @@ fn main() -> Result<(), Error> {
     println!("Peer listening on {}", peer.address());
 
     peer.start_accept_loop(listener);
+
+    // Start Local Discovery
+    if let Err(e) = Discovery::start(listen_port, peer.id.clone(), peer.event_tx.clone()) {
+        eprintln!("Warning: Failed to start local discovery: {}", e);
+    }
 
     if let Some(target_str) = args.get(2) {
         match target_str.parse::<SocketAddr>() {
@@ -56,6 +63,12 @@ fn main() -> Result<(), Error> {
     println!("Starting event loop...");
     for event in event_rx.iter() {
         match event {
+            peer::PeerEvent::Discovered(peer_id, addr) => {
+                if !peer.is_connected(&peer_id) {
+                    println!("[Discovery] Found peer {:?} at {}, connecting...", peer_id, addr);
+                    let _ = peer.connect(addr);
+                }
+            }
             peer::PeerEvent::NewConnection(peer_id) => {
                 println!("[Event] New connection established with {:?}", peer_id);
             }
