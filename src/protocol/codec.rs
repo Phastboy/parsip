@@ -17,9 +17,44 @@ pub struct LengthPrefixCodec;
 impl Encoder<Frame> for LengthPrefixCodec {
     fn encode(&mut self, item: &Frame, stream: &mut impl Write) -> Result<(), Error> {
         let length = (1 + item.payload.len()) as u32;
-        stream.write_all(&length.to_be_bytes())?;
-        stream.write_all(&[item.message_type])?;
-        stream.write_all(&item.payload)?;
+        let len_bytes = length.to_be_bytes();
+        let type_byte = [item.message_type];
+        
+        use std::io::IoSlice;
+        let mut iov = [
+            IoSlice::new(&len_bytes),
+            IoSlice::new(&type_byte),
+            IoSlice::new(&item.payload),
+        ];
+        
+        let mut total_written = 0;
+        let total_len = 4 + 1 + item.payload.len();
+        
+        while total_written < total_len {
+            let n = stream.write_vectored(&iov)?;
+            if n == 0 {
+                return Err(Error::new(ErrorKind::WriteZero, "failed to write whole frame"));
+            }
+            total_written += n;
+            
+            if total_written < total_len {
+                // Adjust IoSlices for remaining data
+                let mut advanced = n;
+                for slice in &mut iov {
+                    if advanced == 0 { break; }
+                    let len = slice.len();
+                    if len > advanced {
+                        *slice = IoSlice::new(unsafe { 
+                            std::slice::from_raw_parts(slice.as_ptr().add(advanced), len - advanced)
+                        });
+                        advanced = 0;
+                    } else {
+                        *slice = IoSlice::new(&[]);
+                        advanced -= len;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
