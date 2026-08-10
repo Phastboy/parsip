@@ -49,9 +49,23 @@ pub fn run(config: Config) -> Result<(), Error> {
                             if let Ok(cmd) = serde_json::from_str::<control::ControlMessage>(&line) {
                                 let (res_tx, res_rx) = std::sync::mpsc::channel();
                                 let _ = tx.send(crate::peer::PeerEvent::ControlRequest(cmd, res_tx));
-                                if let Ok(resp) = res_rx.recv() {
+                                while let Ok(resp) = res_rx.recv() {
+                                    let is_terminal = matches!(resp, 
+                                        control::ControlResponse::Ok |
+                                        control::ControlResponse::Error(_) |
+                                        control::ControlResponse::ScanResults(_) |
+                                        control::ControlResponse::PeersList(_) |
+                                        control::ControlResponse::ResourceList(_) |
+                                        control::ControlResponse::ResourceAdded { .. } |
+                                        control::ControlResponse::DownloadComplete { .. }
+                                    );
                                     if let Ok(resp_json) = serde_json::to_string(&resp) {
-                                        let _ = stream.write_all(format!("{}\n", resp_json).as_bytes());
+                                        if stream.write_all(format!("{}\n", resp_json).as_bytes()).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    if is_terminal {
+                                        break;
                                     }
                                 }
                             } else {
