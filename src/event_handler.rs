@@ -1,9 +1,9 @@
 use std::fs;
 use crate::peer::{Peer, PeerEvent};
-use crate::protocol::{Message, ResourceInfo};
+use crate::protocol::Message;
 use crate::fs_dir::{shared_dir, downloads_dir};
 
-pub fn handle_event(peer: &Peer, event: PeerEvent) {
+pub fn handle_event(peer: &Peer, store: &crate::resource::LocalResourceStore, event: PeerEvent) {
     match event {
         PeerEvent::Discovered(peer_id, addr) => {
             if !peer.is_connected(&peer_id) {
@@ -18,27 +18,15 @@ pub fn handle_event(peer: &Peer, event: PeerEvent) {
         PeerEvent::Disconnected(peer_id) => {
             println!("[Event] Peer {:?} disconnected", peer_id);
         }
-        PeerEvent::Message(peer_id, msg) => handle_message(peer, peer_id, msg),
+        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, peer_id, msg),
     }
 }
 
-fn handle_message(peer: &Peer, peer_id: crate::identity::PeerId, msg: Message) {
+fn handle_message(peer: &Peer, store: &crate::resource::LocalResourceStore, peer_id: crate::identity::PeerId, msg: Message) {
     match msg {
         Message::ListResources => {
             println!("[Protocol] Peer {:?} requested ListResources", peer_id);
-            let mut resources = Vec::new();
-            if let Ok(entries) = fs::read_dir(shared_dir()) {
-                for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_file() {
-                            resources.push(ResourceInfo {
-                                name: entry.file_name().to_string_lossy().to_string(),
-                                size: metadata.len(),
-                            });
-                        }
-                    }
-                }
-            }
+            let resources = store.list_resources();
             let _ = peer.send(&peer_id, &Message::ResourceList { resources });
         }
         Message::ResourceList { resources } => {

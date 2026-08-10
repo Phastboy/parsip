@@ -13,6 +13,7 @@ mod random;
 mod discovery;
 mod fs_dir; // Note: 'fs' is a std mod, so I named the module fs_dir
 mod event_handler;
+mod resource;
 
 use peer::Peer;
 use identity::Identity;
@@ -67,9 +68,11 @@ fn main() -> Result<(), Error> {
         }
     }
 
+    let resource_store = resource::LocalResourceStore::new(shared_dir());
+
     println!("Starting event loop...");
     for event in event_rx.iter() {
-        handle_event(&peer, event);
+        handle_event(&peer, &resource_store, event);
     }
     
     Ok(())
