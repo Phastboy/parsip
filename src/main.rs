@@ -89,9 +89,9 @@ fn main() -> Result<(), Error> {
             .stdout(stdout)
             .stderr(stderr);
 
+        println!("Starting parsip daemon in background...");
         match daemonize.start() {
             Ok(_) => {
-                println!("Starting parsip daemon in background...");
                 if let Err(e) = daemon::run(config) {
                     error!("Daemon crashed: {}", e);
                     std::process::exit(1);
@@ -155,9 +155,9 @@ fn main() -> Result<(), Error> {
             .stdout(stdout)
             .stderr(stderr);
 
+        println!("Starting parsip daemon in background...");
         match daemonize.start() {
             Ok(_) => {
-                println!("Starting parsip daemon in background...");
                 if let Err(e) = daemon::run(config) {
                     error!("Daemon crashed: {}", e);
                     std::process::exit(1);
