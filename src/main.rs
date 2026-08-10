@@ -123,6 +123,51 @@ fn main() -> Result<(), Error> {
         return Ok(());
     }
 
+    if args.len() > 1 && args[1] == "restart" {
+        let base = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let pid_file = base.join(".parsip").join("parsip.pid");
+        
+        // Stop logic
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+                println!("Stopped parsip daemon (PID: {})", pid);
+                let _ = std::fs::remove_file(&pid_file);
+                // Give it a moment to fully shut down
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
+        
+        // Start logic
+        let parsip_dir = base.join(".parsip");
+        let log_file = parsip_dir.join("daemon_out.log");
+        let err_file = parsip_dir.join("daemon_err.log");
+
+        let stdout = File::create(log_file).unwrap();
+        let stderr = File::create(err_file).unwrap();
+
+        let daemonize = daemonize::Daemonize::new()
+            .pid_file(&pid_file)
+            .chown_pid_file(true)
+            .working_directory(base)
+            .stdout(stdout)
+            .stderr(stderr);
+
+        match daemonize.start() {
+            Ok(_) => {
+                println!("Starting parsip daemon in background...");
+                if let Err(e) = daemon::run(config) {
+                    error!("Daemon crashed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            Err(e) => eprintln!("Error, {}", e),
+        }
+        return Ok(());
+    }
+
     // Otherwise, route to CLI client
     if let Err(e) = cli::run(&args) {
         eprintln!("CLI Error: {}", e);
