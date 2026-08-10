@@ -3,11 +3,18 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::connection::Connection;
 use crate::connection_manager::ConnectionManager;
 use crate::identity::{Identity, PeerId};
+use crate::protocol::Frame;
+
+pub enum PeerEvent {
+    NewConnection(PeerId),
+    Disconnected(PeerId),
+    Message(PeerId, Frame),
+}
 
 #[derive(Clone)]
 pub struct Peer {
@@ -15,21 +22,29 @@ pub struct Peer {
     pub id: PeerId,
     address: SocketAddr,
     manager: ConnectionManager,
+    event_tx: Sender<PeerEvent>,
 }
 
 impl Peer {
-    pub fn new(identity: Identity, address: SocketAddr) -> Self {
+    pub fn new(identity: Identity, address: SocketAddr) -> (Self, Receiver<PeerEvent>) {
         let id = identity.peer_id.clone();
-        Self {
+        let (tx, rx) = mpsc::channel();
+        let peer = Self {
             identity: Arc::new(identity),
             id,
             address,
             manager: ConnectionManager::new(),
-        }
+            event_tx: tx,
+        };
+        (peer, rx)
     }
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    pub fn send(&self, target: &PeerId, frame: &Frame) -> Result<(), Error> {
+        self.manager.send(target, frame)
     }
 
     pub fn listen(&self) -> Result<TcpListener, Error> {
@@ -45,7 +60,7 @@ impl Peer {
             return Err(Error::new(ErrorKind::InvalidData, "Rejected self-connection"));
         }
 
-        println!("Handshake successful! Remote peer is {:?}", their_id);
+        let _ = self.event_tx.send(PeerEvent::NewConnection(their_id.clone()));
 
         let conn_id = self.manager.reserve_id();
         let died_before_insert = Arc::new(AtomicBool::new(false));
@@ -53,8 +68,11 @@ impl Peer {
         let manager_for_cleanup = self.manager.clone();
         let cleanup_id = their_id.clone();
         let died_flag = died_before_insert.clone();
+        
+        let tx_clone = self.event_tx.clone();
+        let peer_id_for_loop = their_id.clone();
 
-        connection.start_read_loop(move || {
+        connection.start_read_loop(tx_clone, peer_id_for_loop, move || {
             died_flag.store(true, Ordering::SeqCst);
             manager_for_cleanup.remove_if_current(&cleanup_id, conn_id);
         })?;

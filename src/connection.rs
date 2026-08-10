@@ -86,7 +86,12 @@ impl Connection {
         Ok(their_id)
     }
 
-    pub fn start_read_loop<F>(&self, on_disconnect: F) -> Result<(), Error>
+    pub fn send(&mut self, frame: &Frame) -> Result<(), Error> {
+        let mut codec = LengthPrefixCodec;
+        codec.encode(frame, &mut self.stream)
+    }
+
+    pub fn start_read_loop<F>(&self, event_tx: std::sync::mpsc::Sender<crate::peer::PeerEvent>, peer_id: PeerId, on_disconnect: F) -> Result<(), Error>
     where
         F: FnOnce() + Send + 'static,
     {
@@ -109,13 +114,10 @@ impl Connection {
                             break;
                         }
 
-                        let text = String::from_utf8_lossy(&frame.payload);
-                        println!("Received frame:");
-                        println!("    type: {:?}", frame.message_type);
-                        println!("    payload: {}", text);
+                        // Dispatch the frame!
+                        let _ = event_tx.send(crate::peer::PeerEvent::Message(peer_id.clone(), frame));
                     }
                     Ok(None) => {
-                        println!("Peer {} disconnected cleanly.", peer_addr);
                         break;
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
@@ -128,6 +130,7 @@ impl Connection {
                 }
             }
 
+            let _ = event_tx.send(crate::peer::PeerEvent::Disconnected(peer_id));
             on_disconnect();
         });
 
