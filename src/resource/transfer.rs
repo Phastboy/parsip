@@ -3,6 +3,7 @@ use crate::identity::PeerId;
 use crate::protocol::message::types::ResourceId;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Transfer {
     pub request_id: u32,
     pub peer_id: PeerId,
@@ -37,6 +38,7 @@ impl TransferManager {
         self.transfers.remove(&request_id)
     }
 
+    #[allow(dead_code)]
     pub fn list(&self) -> Vec<Transfer> {
         self.transfers.values().cloned().collect()
     }

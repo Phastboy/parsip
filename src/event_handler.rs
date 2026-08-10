@@ -174,8 +174,7 @@ fn handle_control(
             if let Some(peer_id) = aliases.get_peer(&peer_alias) {
                 if let Some(res_id) = aliases.get_resource(&resource_alias) {
                     if let Some(info) = aliases.get_info(&res_id) {
-                        let chunk_size = 32 * 1024;
-                        if let Ok(()) = download_mgr.start_download(&info, chunk_size) {
+                        if let Ok(()) = download_mgr.start_download(&info) {
                             let request_id = req_tracker.next_id();
                             transfer_mgr.register(crate::resource::Transfer {
                                 request_id,

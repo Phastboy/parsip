@@ -7,7 +7,6 @@ use crate::protocol::{ResourceInfo, message::types::ResourceId};
 
 pub struct ActiveDownload {
     pub info: ResourceInfo,
-    pub chunk_size: u32,
     pub received_bytes: u64,
     pub temp_file: File,
     pub temp_path: PathBuf,
@@ -26,7 +25,7 @@ impl DownloadManager {
         }
     }
 
-    pub fn start_download(&mut self, info: &ResourceInfo, chunk_size: u32) -> Result<(), Error> {
+    pub fn start_download(&mut self, info: &ResourceInfo) -> Result<(), Error> {
         let temp_path = self.downloads_dir.join(format!(".tmp_{:?}", info.id));
         let temp_file = OpenOptions::new()
             .read(true)
@@ -40,7 +39,6 @@ impl DownloadManager {
 
         let download = ActiveDownload {
             info: info.clone(),
-            chunk_size,
             received_bytes: 0,
             temp_file,
             temp_path,
@@ -73,16 +71,6 @@ impl DownloadManager {
         Err(Error::new(ErrorKind::NotFound, "Download not found"))
     }
 
-    pub fn get_next_request(&self, id: &ResourceId) -> Option<(u64, u32)> {
-        if let Some(download) = self.downloads.get(id) {
-            if download.received_bytes < download.info.size {
-                let remaining = download.info.size - download.received_bytes;
-                let length = (download.chunk_size as u64).min(remaining) as u32;
-                return Some((download.received_bytes, length));
-            }
-        }
-        None
-    }
 
     pub fn complete_download(&mut self, id: &ResourceId) -> Result<(), Error> {
         if let Some(download) = self.downloads.remove(id) {
