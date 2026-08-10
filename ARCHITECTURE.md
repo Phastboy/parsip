@@ -37,26 +37,34 @@ The `Protocol` dictates the **meaning** of the bytes traversing a `Connection`.
 
 A network endpoint (`SocketAddr` like `192.168.0.2:9000`) is transient. A Parsip identity (`PeerId`) is permanent.
 
-- **Storage**: Identities are persisted locally (e.g., `~/.parsip/identity.key`) so a peer remains the same logical participant across restarts, IP changes, and NATs.
-- **Authentication**: While currently a randomly generated `[u8; 32]`, the `PeerId` is designed to evolve into a public key hash (`hash(public_key)`), allowing the `Connection` handshake to cryptographically authenticate peers.
+- **Storage**: Identities are persisted locally (e.g., `~/.parsip/identity`) so a peer remains the same logical participant across restarts, IP changes, and NATs.
+- **Authentication**: A `PeerId` is derived deterministically from an Ed25519 public key (`SHA-256(pubkey)`). During the `Connection` handshake, peers exchange public keys and sign random nonces (challenge-response) to cryptographically prove ownership of their `PeerId` before any application data is exchanged.
 
 ---
 
-## 3. The Protocol Lifecycle Progression
+## 3. Peer Discovery
+
+Parsip nodes discover each other autonomously without relying on central coordination servers.
+
+- **Local Discovery (UDP Broadcast)**: Nodes on the same local network (e.g., the same WiFi) find each other seamlessly. A background broadcaster routinely shouts its `PeerId` and TCP listen port via UDP to `255.255.255.255:9090`. A background listener catches these broadcasts and pipes `PeerEvent::Discovered` events into the `Peer`'s event loop, which autonomously initiates a TCP connection if one doesn't already exist.
+
+---
+
+## 4. The Protocol Lifecycle Progression
 
 Parsip is being built according to the following evolutionary stages:
 
 ### Stage 1: Identity
-Establishing the `PeerId` structure and persistence.
+Establishing the `PeerId` structure, cryptographic ed25519 keypairs, and local persistence.
 
 ### Stage 2: Connection Identity
-Performing synchronous handshakes to prove identity upon TCP connection, resulting in a `HashMap<PeerId, Connection>`.
+Performing synchronous challenge-response handshakes to cryptographically prove identity upon TCP connection, resulting in a secure `HashMap<PeerId, Connection>`.
 
 ### Stage 3: Peer Lifecycle
 Handling the complex realities of networking: disconnects, reconnects, duplicate connections, and avoiding stale-cleanup races when managing the connection pool.
 
-### Stage 4: Peer-to-Peer Messaging
-Exposing clean primitives on the `Peer` to route frames to specific `PeerId`s asynchronously.
+### Stage 4: Peer Discovery & Routing
+Implementing the Bidirectional Message Dispatcher (an event loop cleanly detached from TCP) and autonomous UDP broadcast discovery so peers can mesh automatically.
 
 ### Stage 5: Resource Protocol
 Finally layering on the actual semantic purpose of Parsip: sharing resources via `LIST_RESOURCES`, `GET_RESOURCE`, and `RESOURCE_DATA`.
