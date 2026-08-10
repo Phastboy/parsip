@@ -57,4 +57,13 @@ impl ConnectionManager {
         conns.insert(peer_id, (conn_id, connection));
         Ok(())
     }
+
+    pub fn send(&self, peer_id: &PeerId, frame: &crate::protocol::Frame) -> Result<(), Error> {
+        if let Ok(mut conns) = self.connections.lock() {
+            if let Some((_, connection)) = conns.get_mut(peer_id) {
+                return connection.send(frame);
+            }
+        }
+        Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))
+    }
 }
