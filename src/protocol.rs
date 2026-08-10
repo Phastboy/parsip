@@ -1,13 +1,14 @@
 use std::io::{Error, ErrorKind, Read, Write};
 
-const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024; // 16MB, tune as needed
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageType {
     Hello = 1,
-    ListResources = 2,
-    GetResource = 3,
+    HelloProof = 2,
+    ListResources = 3,
+    GetResource = 4,
 }
 
 impl TryFrom<u8> for MessageType {
@@ -16,8 +17,9 @@ impl TryFrom<u8> for MessageType {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(MessageType::Hello),
-            2 => Ok(MessageType::ListResources),
-            3 => Ok(MessageType::GetResource),
+            2 => Ok(MessageType::HelloProof),
+            3 => Ok(MessageType::ListResources),
+            4 => Ok(MessageType::GetResource),
             _ => Err(Error::new(ErrorKind::InvalidData, format!("Unknown message type: {}", value))),
         }
     }
@@ -48,7 +50,7 @@ pub struct LengthPrefixCodec;
 
 impl Encoder<Frame> for LengthPrefixCodec {
     fn encode(&mut self, item: &Frame, stream: &mut impl Write) -> Result<(), Error> {
-        let length = (1 + item.payload.len()) as u32; // 1 byte for type + payload length
+        let length = (1 + item.payload.len()) as u32;
         stream.write_all(&length.to_be_bytes())?;
         stream.write_all(&[item.message_type as u8])?;
         stream.write_all(&item.payload)?;

@@ -8,9 +8,10 @@ mod peer;
 mod connection;
 mod connection_manager;
 mod identity;
+mod random;
 
 use peer::Peer;
-use identity::PeerId;
+use identity::Identity;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -20,8 +21,8 @@ fn main() -> Result<(), Error> {
         .unwrap_or(9000);
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, listen_port));
-    let peer_id = PeerId::load_or_generate();
-    let peer = Peer::new(peer_id, address);
+    let identity = Identity::load_or_generate();
+    let peer = Peer::new(identity, address);
     let listener = peer.listen()?;
 
     println!("Peer listening on {}", peer.address());
