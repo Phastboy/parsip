@@ -1,20 +1,19 @@
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::collections::HashMap;
 
 use crate::connection::Connection;
+use crate::connection_manager::ConnectionManager;
 use crate::identity::PeerId;
 
 #[derive(Clone)]
 pub struct Peer {
     pub id: PeerId,
     address: SocketAddr,
-    connections: Arc<Mutex<HashMap<PeerId, (u64, Connection)>>>,
-    next_conn_id: Arc<AtomicU64>,
+    manager: ConnectionManager,
 }
 
 impl Peer {
@@ -22,8 +21,7 @@ impl Peer {
         Self {
             id,
             address,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            next_conn_id: Arc::new(AtomicU64::new(1)),
+            manager: ConnectionManager::new(),
         }
     }
 
@@ -36,6 +34,7 @@ impl Peer {
     }
 
     /// Shared handshake + registration path for both inbound and outbound connections.
+    /// Peer owns identity/orchestration; ConnectionManager owns the registry itself.
     fn register_connection(&self, stream: TcpStream, remote_addr: SocketAddr) -> Result<PeerId, Error> {
         let mut connection = Connection::new(stream, remote_addr);
 
@@ -47,48 +46,23 @@ impl Peer {
 
         println!("Handshake successful! Remote peer is {:?}", their_id);
 
-        let conn_id = self.next_conn_id.fetch_add(1, Ordering::SeqCst);
+        let conn_id = self.manager.reserve_id();
         let died_before_insert = Arc::new(AtomicBool::new(false));
 
-        let connections = self.connections.clone();
+        let manager_for_cleanup = self.manager.clone();
         let cleanup_id = their_id.clone();
         let died_flag = died_before_insert.clone();
 
         connection.start_read_loop(move || {
-            // Mark first, in case this fires before registration below completes.
             died_flag.store(true, Ordering::SeqCst);
-            if let Ok(mut conns) = connections.lock() {
-                // Only remove if the entry currently registered is THIS connection —
-                // otherwise a newer connection for the same peer would be wiped out.
-                let should_remove = matches!(conns.get(&cleanup_id), Some((id, _)) if *id == conn_id);
-                if should_remove {
-                    conns.remove(&cleanup_id);
-                    println!("Removed dead connection for {:?}", cleanup_id);
-                }
-            }
+            manager_for_cleanup.remove_if_current(&cleanup_id, conn_id);
         })?;
 
-        let mut conns = self.connections.lock()
-            .map_err(|_| Error::new(ErrorKind::Other, "connections lock poisoned"))?;
-
-        if died_before_insert.load(Ordering::SeqCst) {
-            // Connection died between starting the read loop and reaching here —
-            // don't insert an already-dead connection that nothing will ever clean up.
-            drop(conns);
-            return Err(Error::new(ErrorKind::ConnectionAborted, "Connection died before registration completed"));
-        }
-
-        if conns.contains_key(&their_id) {
-            println!("Replacing existing connection for {:?}", their_id);
-        }
-        conns.insert(their_id.clone(), (conn_id, connection));
+        self.manager.insert_if_alive(their_id.clone(), conn_id, connection, &died_before_insert)?;
 
         Ok(their_id)
     }
 
-    /// Accepts inbound connections on a background thread. Each accepted
-    /// connection is handed off to its own thread so a slow/silent peer
-    /// can't stall accepting further connections.
     pub fn start_accept_loop(&self, listener: TcpListener) {
         let peer_clone = self.clone();
         thread::spawn(move || {
@@ -112,10 +86,6 @@ impl Peer {
         });
     }
 
-    /// Non-blocking: dials and registers the connection on a background thread.
-    /// Returns a Receiver the caller can optionally check for the outcome —
-    /// Ok(PeerId) on success, Err(Error) on dial or handshake failure.
-    /// Dropping the receiver without reading it is fine; the send simply no-ops.
     pub fn connect(&self, target: SocketAddr) -> Receiver<Result<PeerId, Error>> {
         let (tx, rx) = mpsc::channel();
         let peer_clone = self.clone();
