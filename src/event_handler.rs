@@ -32,31 +32,47 @@ fn handle_message(peer: &Peer, store: &crate::resource::LocalResourceStore, peer
         Message::ResourceList { resources } => {
             println!("[Protocol] Received resources from {:?}:", peer_id);
             for res in &resources {
-                println!(" - {} ({} bytes)", res.name, res.size);
+                println!(" - {} ({} bytes, id: {:?})", res.name, res.size, res.id);
             }
             if let Some(res) = resources.first() {
                 println!("[Protocol] Automatically downloading {}...", res.name);
-                let _ = peer.send(&peer_id, &Message::GetResource { name: res.name.clone() });
+                let _ = peer.send(&peer_id, &Message::GetChunk { 
+                    id: res.id.clone(), 
+                    offset: 0, 
+                    // Safely request up to 1MB or the file size
+                    length: (res.size as u32).min(1024 * 1024) 
+                });
             }
         }
-        Message::GetResource { name } => {
-            println!("[Protocol] Peer {:?} requested GetResource: {}", peer_id, name);
-            if !name.contains('/') && !name.contains('\\') {
-                let file_path = shared_dir().join(&name);
-                if let Ok(data) = fs::read(file_path) {
-                    let _ = peer.send(&peer_id, &Message::ResourceData { name, data });
-                } else {
-                    eprintln!("[Protocol] File {} not found or unreadable", name);
+        Message::GetChunk { id, offset, length } => {
+            println!("[Protocol] Peer {:?} requested GetChunk: {:?} offset {} len {}", peer_id, id, offset, length);
+            if let Some(file_path) = store.get_path(&id) {
+                use std::io::{Seek, SeekFrom, Read};
+                if let Ok(mut file) = std::fs::File::open(file_path) {
+                    if file.seek(SeekFrom::Start(offset)).is_ok() {
+                        let mut buffer = vec![0u8; length as usize];
+                        if let Ok(bytes_read) = file.read(&mut buffer) {
+                            buffer.truncate(bytes_read);
+                            let _ = peer.send(&peer_id, &Message::ResourceChunk { 
+                                id, 
+                                offset, 
+                                data: buffer 
+                            });
+                        }
+                    }
                 }
+            } else {
+                eprintln!("[Protocol] Resource {:?} not found", id);
             }
         }
-        Message::ResourceData { name, data } => {
-            println!("[Protocol] Received file {} from {:?} ({} bytes)", name, peer_id, data.len());
-            let file_path = downloads_dir().join(&name);
-            if let Err(e) = fs::write(&file_path, data) {
-                eprintln!("Failed to save downloaded file: {}", e);
+        Message::ResourceChunk { id, offset, data } => {
+            println!("[Protocol] Received chunk for {:?} offset {} ({} bytes)", id, offset, data.len());
+            // For now, just save it as the chunk (full file download assembly will come next!)
+            let file_path = downloads_dir().join(format!("{:?}.chunk", id));
+            if let Err(e) = std::fs::write(&file_path, data) {
+                eprintln!("Failed to save downloaded chunk: {}", e);
             } else {
-                println!("Saved to {:?}", file_path);
+                println!("Saved chunk to {:?}", file_path);
             }
         }
         _ => {}
