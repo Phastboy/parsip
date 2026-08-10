@@ -69,10 +69,11 @@ fn main() -> Result<(), Error> {
     }
 
     let resource_store = resource::LocalResourceStore::new(shared_dir());
+    let mut download_mgr = resource::DownloadManager::new();
 
     println!("Starting event loop...");
     for event in event_rx.iter() {
-        handle_event(&peer, &resource_store, event);
+        handle_event(&peer, &resource_store, &mut download_mgr, event);
     }
     
     Ok(())
