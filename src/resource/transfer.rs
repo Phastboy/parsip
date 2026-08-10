@@ -11,6 +11,7 @@ pub struct Transfer {
     pub is_download: bool,
     pub bytes_transferred: u64,
     pub bytes_total: u64,
+    pub start_time: std::time::Instant,
 }
 
 pub struct TransferManager {

@@ -22,6 +22,7 @@ pub enum ControlResponse {
     PeersList(Vec<ConnectedPeerInfo>),
     ResourceList(Vec<ResourceInfo>),
     ResourceAdded { alias: String, id: ResourceId },
+    DownloadComplete { bytes: u64, elapsed_secs: f64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

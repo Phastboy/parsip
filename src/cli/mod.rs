@@ -157,6 +157,15 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         ControlResponse::ResourceAdded { alias, id } => {
             println!("Added resource -> {:?} (alias: {})", id, alias);
         }
+        ControlResponse::DownloadComplete { bytes, elapsed_secs } => {
+            let mb = bytes as f64 / 1_000_000.0;
+            let mb_per_sec = if elapsed_secs > 0.0 {
+                mb / elapsed_secs
+            } else {
+                0.0
+            };
+            println!("Downloaded {} in {:.2}s ({:.2} MB/s)", format_size(bytes), elapsed_secs, mb_per_sec);
+        }
     }
 
     Ok(())
