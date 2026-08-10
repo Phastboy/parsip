@@ -69,6 +69,7 @@ pub fn handle_event(
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
+    transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
     event: PeerEvent
@@ -94,8 +95,8 @@ pub fn handle_event(
         PeerEvent::Disconnected(peer_id) => {
             println!("[Event] Peer {:?} disconnected", peer_id);
         }
-        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, aliases, req_tracker, peer_id, msg),
-        PeerEvent::ControlRequest(cmd, sender) => handle_control(config, peer, store, download_mgr, aliases, req_tracker, cmd, sender),
+        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, transfer_mgr, aliases, req_tracker, peer_id, msg),
+        PeerEvent::ControlRequest(cmd, sender) => handle_control(config, peer, store, download_mgr, transfer_mgr, aliases, req_tracker, cmd, sender),
         PeerEvent::ScanTimeout(req_id) => {
             if let Some(sender) = req_tracker.complete(req_id) {
                 let mut results = Vec::new();
@@ -116,6 +117,7 @@ fn handle_control(
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
+    transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
     cmd: ControlMessage,
@@ -174,15 +176,17 @@ fn handle_control(
                     if let Some(info) = aliases.get_info(&res_id) {
                         let chunk_size = 32 * 1024;
                         if let Ok(()) = download_mgr.start_download(&info, chunk_size) {
-                            if let Some((offset, length)) = download_mgr.get_next_request(&res_id) {
-                                // RequestTracker for GetResource? 
-                                // GetChunk returns a single ResourceChunk. The download manager handles it.
-                                // We probably should just return Ok immediately to the CLI, and let background handle it.
-                                let _ = peer.send(&peer_id, &Message::GetChunk { request_id: 0, id: res_id.clone(), offset, length });
-                                let _ = sender.send(ControlResponse::Ok);
-                            } else {
-                                let _ = sender.send(ControlResponse::Error("Already downloaded".to_string()));
-                            }
+                            let request_id = req_tracker.next_id();
+                            transfer_mgr.register(crate::resource::Transfer {
+                                request_id,
+                                peer_id: peer_id.clone(),
+                                resource_id: res_id.clone(),
+                                is_download: true,
+                                bytes_transferred: 0,
+                                bytes_total: info.size,
+                            });
+                            let _ = peer.send(&peer_id, &Message::DownloadResource { request_id, id: res_id.clone() });
+                            let _ = sender.send(ControlResponse::Ok);
                         } else {
                             let _ = sender.send(ControlResponse::Error("Failed to start download".to_string()));
                         }
@@ -221,6 +225,7 @@ fn handle_message(
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
+    transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
     peer_id: crate::identity::PeerId, 
@@ -252,39 +257,56 @@ fn handle_message(
                 let _ = sender.send(ControlResponse::ResourceList(ctrl_resources));
             }
         }
-        Message::GetChunk { request_id, id, offset, length } => {
+        Message::DownloadResource { request_id, id } => {
             if let Some(file_path) = store.get_path(&id) {
-                use std::io::{Seek, SeekFrom, Read};
-                if let Ok(mut file) = std::fs::File::open(file_path) {
-                    if file.seek(SeekFrom::Start(offset)).is_ok() {
-                        let mut buffer = vec![0u8; length as usize];
-                        if let Ok(bytes_read) = file.read(&mut buffer) {
-                            buffer.truncate(bytes_read);
-                            let _ = peer.send(&peer_id, &Message::ResourceChunk { 
-                                request_id,
-                                id, 
-                                offset, 
-                                data: buffer 
-                            });
+                let peer_clone = peer.clone();
+                let peer_id_clone = peer_id.clone();
+                let id_clone = id.clone();
+                std::thread::spawn(move || {
+                    use std::io::Read;
+                    if let Ok(mut file) = std::fs::File::open(file_path) {
+                        let mut buffer = vec![0u8; 32 * 1024];
+                        let mut offset = 0u64;
+                        loop {
+                            match file.read(&mut buffer) {
+                                Ok(0) => break, // EOF
+                                Ok(bytes_read) => {
+                                    let data = buffer[..bytes_read].to_vec();
+                                    let chunk_msg = Message::ResourceChunk {
+                                        request_id,
+                                        id: id_clone.clone(),
+                                        offset,
+                                        data,
+                                    };
+                                    if peer_clone.send(&peer_id_clone, &chunk_msg).is_err() {
+                                        eprintln!("[Protocol] Connection lost during file stream");
+                                        return;
+                                    }
+                                    offset += bytes_read as u64;
+                                }
+                                Err(e) => {
+                                    eprintln!("[Protocol] Error reading file: {}", e);
+                                    return;
+                                }
+                            }
                         }
+                        // Send End
+                        let _ = peer_clone.send(&peer_id_clone, &Message::ResourceEnd { request_id, id: id_clone });
                     }
-                }
+                });
             }
         }
         Message::ResourceChunk { request_id, id, offset, data } => {
-            match download_mgr.process_chunk(&id, offset, &data) {
-                Ok(true) => {
-                    if let Ok(()) = download_mgr.complete_download(&id) {
-                        println!("[Protocol] Download complete for {:?}", id);
-                    }
-                }
-                Ok(false) => {
-                    if let Some((next_offset, length)) = download_mgr.get_next_request(&id) {
-                        let _ = peer.send(&peer_id, &Message::GetChunk { request_id, id, offset: next_offset, length });
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[Protocol] Error processing chunk: {}", e);
+            if let Ok(_) = download_mgr.process_chunk(&id, offset, &data) {
+                transfer_mgr.update_progress(request_id, data.len() as u64);
+            }
+        }
+        Message::ResourceEnd { request_id, id } => {
+            if let Ok(()) = download_mgr.complete_download(&id) {
+                if let Some(t) = transfer_mgr.complete(request_id) {
+                    println!("[Protocol] Download complete for {:?} ({} bytes)", id, t.bytes_total);
+                } else {
+                    println!("[Protocol] Download complete for {:?}", id);
                 }
             }
         }

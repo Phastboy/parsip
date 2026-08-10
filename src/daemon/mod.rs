@@ -27,6 +27,7 @@ pub fn run(config: Config) -> Result<(), Error> {
     let mut resource_store = LocalResourceStore::new(config.shared_dir.clone());
     let mut download_mgr = DownloadManager::new(config.downloads_dir.clone());
     let mut aliases = AliasRegistry::new();
+    let mut transfer_mgr = crate::resource::TransferManager::new();
 
     // Start Control TCP Server (127.0.0.1:9091)
     let control_listener = TcpListener::bind("127.0.0.1:9091")?;
@@ -64,7 +65,7 @@ pub fn run(config: Config) -> Result<(), Error> {
     });
 
     for event in event_rx.iter() {
-        handle_event(&config, &peer, &mut resource_store, &mut download_mgr, &mut aliases, &mut request_tracker, event);
+        handle_event(&config, &peer, &mut resource_store, &mut download_mgr, &mut transfer_mgr, &mut aliases, &mut request_tracker, event);
     }
     
     Ok(())

@@ -26,8 +26,9 @@ impl TryFrom<Frame> for Message {
             }
             3 => parse_list_resources(p),
             4 => parse_resource_list(p),
-            5 => parse_get_chunk(p),
+            5 => parse_download_resource(p),
             6 => parse_resource_chunk(p),
+            7 => parse_resource_end(p),
             _ => Err(err("Unknown msg type")),
         }
     }
@@ -76,14 +77,12 @@ fn parse_resource_list(p: &[u8]) -> Result<Message, Error> {
     Ok(Message::ResourceList { request_id, resources })
 }
 
-fn parse_get_chunk(p: &[u8]) -> Result<Message, Error> {
-    if p.len() != 48 { return Err(err("Bad GetChunk")); }
+fn parse_download_resource(p: &[u8]) -> Result<Message, Error> {
+    if p.len() != 36 { return Err(err("Bad DownloadResource")); }
     let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
     let mut id_bytes = [0u8; 32];
     id_bytes.copy_from_slice(&p[4..36]);
-    let offset = u64::from_be_bytes(p[36..44].try_into().unwrap());
-    let length = u32::from_be_bytes(p[44..48].try_into().unwrap());
-    Ok(Message::GetChunk { request_id, id: ResourceId(id_bytes), offset, length })
+    Ok(Message::DownloadResource { request_id, id: ResourceId(id_bytes) })
 }
 
 fn parse_resource_chunk(p: &[u8]) -> Result<Message, Error> {
@@ -94,4 +93,12 @@ fn parse_resource_chunk(p: &[u8]) -> Result<Message, Error> {
     let offset = u64::from_be_bytes(p[36..44].try_into().unwrap());
     let data = p[44..].to_vec();
     Ok(Message::ResourceChunk { request_id, id: ResourceId(id_bytes), offset, data })
+}
+
+fn parse_resource_end(p: &[u8]) -> Result<Message, Error> {
+    if p.len() != 36 { return Err(err("Bad ResourceEnd")); }
+    let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
+    let mut id_bytes = [0u8; 32];
+    id_bytes.copy_from_slice(&p[4..36]);
+    Ok(Message::ResourceEnd { request_id, id: ResourceId(id_bytes) })
 }

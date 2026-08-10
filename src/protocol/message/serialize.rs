@@ -31,12 +31,10 @@ impl Into<Frame> for &Message {
                 }
                 p
             }
-            Message::GetChunk { request_id, id, offset, length } => {
-                let mut p = Vec::with_capacity(4 + 32 + 8 + 4);
+            Message::DownloadResource { request_id, id } => {
+                let mut p = Vec::with_capacity(4 + 32);
                 p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&id.0);
-                p.extend_from_slice(&offset.to_be_bytes());
-                p.extend_from_slice(&length.to_be_bytes());
                 p
             }
             Message::ResourceChunk { request_id, id, offset, data } => {
@@ -45,6 +43,12 @@ impl Into<Frame> for &Message {
                 p.extend_from_slice(&id.0);
                 p.extend_from_slice(&offset.to_be_bytes());
                 p.extend_from_slice(data);
+                p
+            }
+            Message::ResourceEnd { request_id, id } => {
+                let mut p = Vec::with_capacity(4 + 32);
+                p.extend_from_slice(&request_id.to_be_bytes());
+                p.extend_from_slice(&id.0);
                 p
             }
         };

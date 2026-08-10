@@ -16,8 +16,9 @@ pub enum Message {
     HelloProof { signature: [u8; 64] },
     ListResources { request_id: u32 },
     ResourceList { request_id: u32, resources: Vec<ResourceInfo> },
-    GetChunk { request_id: u32, id: ResourceId, offset: u64, length: u32 },
+    DownloadResource { request_id: u32, id: ResourceId },
     ResourceChunk { request_id: u32, id: ResourceId, offset: u64, data: Vec<u8> },
+    ResourceEnd { request_id: u32, id: ResourceId },
 }
 
 impl Message {
@@ -27,8 +28,9 @@ impl Message {
             Message::HelloProof { .. } => 2,
             Message::ListResources { .. } => 3,
             Message::ResourceList { .. } => 4,
-            Message::GetChunk { .. } => 5,
+            Message::DownloadResource { .. } => 5,
             Message::ResourceChunk { .. } => 6,
+            Message::ResourceEnd { .. } => 7,
         }
     }
 }
