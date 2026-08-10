@@ -14,6 +14,7 @@ mod discovery;
 mod config;
 mod event_handler;
 mod resource;
+mod request_tracker;
 
 use peer::Peer;
 use identity::Identity;
