@@ -6,9 +6,24 @@ use std::collections::HashMap;
 use crate::connection::{Connection, Direction};
 use crate::identity::PeerId;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConnectionState {
+    Handshaking,
+    Established,
+    Closing,
+}
+
+pub struct ConnectionEntry {
+    pub id: u64,
+    pub peer_id: PeerId,
+    pub direction: Direction,
+    pub connection: Connection,
+    pub state: ConnectionState,
+}
+
 #[derive(Clone)]
 pub struct ConnectionManager {
-    connections: Arc<Mutex<HashMap<PeerId, (u64, Connection, Direction)>>>,
+    connections: Arc<Mutex<HashMap<PeerId, ConnectionEntry>>>,
     next_conn_id: Arc<AtomicU64>,
 }
 
@@ -26,7 +41,7 @@ impl ConnectionManager {
 
     pub fn remove_if_current(&self, peer_id: &PeerId, conn_id: u64) {
         if let Ok(mut conns) = self.connections.lock() {
-            let should_remove = matches!(conns.get(peer_id), Some((id, _, _)) if *id == conn_id);
+            let should_remove = matches!(conns.get(peer_id), Some(entry) if entry.id == conn_id);
             if should_remove {
                 conns.remove(peer_id);
                 println!("Removed dead connection for {:?}", peer_id);
@@ -53,7 +68,7 @@ impl ConnectionManager {
             ));
         }
 
-        if let Some((_, _, _old_dir)) = conns.get(&their_id) {
+        if let Some(_old_entry) = conns.get(&their_id) {
             let is_local_initiator = direction == Direction::Outgoing;
             let local_wins_tie = my_id.to_bytes() > their_id.to_bytes();
             
@@ -65,26 +80,38 @@ impl ConnectionManager {
 
             if keep_new {
                 println!("Deduplication: keeping NEW {:?} connection to {:?}", direction, their_id);
-                if let Some((_, old_conn, _)) = conns.remove(&their_id) {
-                    let _ = old_conn.stream.shutdown(std::net::Shutdown::Both);
+                if let Some(old_entry) = conns.remove(&their_id) {
+                    let _ = old_entry.connection.stream.shutdown(std::net::Shutdown::Both);
                 }
-                conns.insert(their_id, (conn_id, connection, direction));
+                conns.insert(their_id.clone(), ConnectionEntry {
+                    id: conn_id,
+                    peer_id: their_id,
+                    direction,
+                    connection,
+                    state: ConnectionState::Established,
+                });
                 Ok(())
             } else {
                 println!("Deduplication: dropping NEW {:?} connection to {:?}", direction, their_id);
                 Err(Error::new(ErrorKind::AlreadyExists, "Deduplication tie-breaker dropped connection"))
             }
         } else {
-            conns.insert(their_id, (conn_id, connection, direction));
+            conns.insert(their_id.clone(), ConnectionEntry {
+                id: conn_id,
+                peer_id: their_id,
+                direction,
+                connection,
+                state: ConnectionState::Established,
+            });
             Ok(())
         }
     }
 
     pub fn send(&self, peer_id: &PeerId, message: &crate::protocol::Message) -> Result<(), Error> {
         if let Ok(mut conns) = self.connections.lock() {
-            if let Some((_, connection, _)) = conns.get_mut(peer_id) {
+            if let Some(entry) = conns.get_mut(peer_id) {
                 let frame: crate::protocol::Frame = message.into();
-                return connection.send(&frame);
+                return entry.connection.send(&frame);
             }
         }
         Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))
