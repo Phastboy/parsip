@@ -70,6 +70,7 @@ pub fn handle_event(
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
     aliases: &mut AliasRegistry,
+    req_tracker: &mut crate::request_tracker::RequestTracker,
     event: PeerEvent
 ) {
     match event {
@@ -87,107 +88,95 @@ pub fn handle_event(
         PeerEvent::Disconnected(peer_id) => {
             println!("[Event] Peer {:?} disconnected", peer_id);
         }
-        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, aliases, peer_id, msg),
-        PeerEvent::Command(cmd) => handle_command(peer, store, download_mgr, aliases, cmd),
+        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, aliases, req_tracker, peer_id, msg),
+        PeerEvent::ControlRequest(cmd, sender) => handle_control(peer, store, download_mgr, aliases, req_tracker, cmd, sender),
     }
 }
 
-fn handle_command(
+use std::sync::mpsc::Sender;
+use crate::daemon::control::{ControlMessage, ControlResponse, DiscoveredPeerInfo, ConnectedPeerInfo, ResourceInfo as CtrlResourceInfo};
+
+fn handle_control(
     peer: &Peer, 
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
     aliases: &mut AliasRegistry,
-    cmd: String
+    req_tracker: &mut crate::request_tracker::RequestTracker,
+    cmd: ControlMessage,
+    sender: Sender<ControlResponse>
 ) {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    if parts.is_empty() { return; }
-
-    match parts[0] {
-        "connect" => {
-            if parts.len() < 2 {
-                println!("Usage: connect <ip:port>");
-                return;
-            }
-            if let Ok(addr) = parts[1].parse::<SocketAddr>() {
-                println!("Connecting to {}...", addr);
-                let _ = peer.connect(addr);
-            } else {
-                println!("Invalid address format");
-            }
+    match cmd {
+        ControlMessage::Scan => {
+            // For now, we return empty until JIT Discovery is implemented in Phase 6
+            let _ = sender.send(ControlResponse::ScanResults(vec![]));
         }
-        "peers" => {
-            println!("Connected Peers:");
+        ControlMessage::Connect { alias } => {
+            // we don't have a persistent discovery registry yet, so this will fail for now unless we implement JIT discovery.
+            let _ = sender.send(ControlResponse::Error("Connect requires JIT discovery (Phase 6)".to_string()));
+        }
+        ControlMessage::ListPeers => {
+            let mut connected = Vec::new();
             for (alias, id) in &aliases.peer_aliases {
                 if peer.is_connected(id) {
-                    println!("  {} -> {:?}", alias, id);
+                    connected.push(ConnectedPeerInfo { alias: alias.clone(), peer_id: id.clone() });
                 }
             }
+            let _ = sender.send(ControlResponse::PeersList(connected));
         }
-        "list" => {
-            if parts.len() < 2 {
-                println!("Usage: list <peer_alias>");
-                return;
-            }
-            if let Some(peer_id) = aliases.get_peer(parts[1]) {
-                let _ = peer.send(&peer_id, &Message::ListResources { request_id: 0 });
-                println!("Requested resource list from {}", parts[1]);
+        ControlMessage::ListResources { peer_alias } => {
+            if let Some(peer_id) = aliases.get_peer(&peer_alias) {
+                let req_id = req_tracker.next_id();
+                req_tracker.register(req_id, sender);
+                let _ = peer.send(&peer_id, &Message::ListResources { request_id: req_id });
             } else {
-                println!("Unknown peer alias: {}", parts[1]);
+                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", peer_alias)));
             }
         }
-        "get" => {
-            if parts.len() < 3 {
-                println!("Usage: get <peer_alias> <resource_alias>");
-                return;
-            }
-            if let Some(peer_id) = aliases.get_peer(parts[1]) {
-                if let Some(res_id) = aliases.get_resource(parts[2]) {
+        ControlMessage::GetResource { peer_alias, resource_alias } => {
+            if let Some(peer_id) = aliases.get_peer(&peer_alias) {
+                if let Some(res_id) = aliases.get_resource(&resource_alias) {
                     if let Some(info) = aliases.get_info(&res_id) {
                         let chunk_size = 32 * 1024;
                         if let Ok(()) = download_mgr.start_download(&info, chunk_size) {
                             if let Some((offset, length)) = download_mgr.get_next_request(&res_id) {
+                                // RequestTracker for GetResource? 
+                                // GetChunk returns a single ResourceChunk. The download manager handles it.
+                                // We probably should just return Ok immediately to the CLI, and let background handle it.
                                 let _ = peer.send(&peer_id, &Message::GetChunk { request_id: 0, id: res_id.clone(), offset, length });
-                                println!("Started downloading {} from {}", parts[2], parts[1]);
+                                let _ = sender.send(ControlResponse::Ok);
+                            } else {
+                                let _ = sender.send(ControlResponse::Error("Already downloaded".to_string()));
                             }
                         } else {
-                            println!("Failed to start download");
+                            let _ = sender.send(ControlResponse::Error("Failed to start download".to_string()));
                         }
                     } else {
-                        println!("Resource metadata missing. Try 'list {}' first.", parts[1]);
+                        let _ = sender.send(ControlResponse::Error(format!("Resource metadata missing. Try 'list {}' first.", peer_alias)));
                     }
                 } else {
-                    println!("Unknown resource alias: {}", parts[2]);
+                    let _ = sender.send(ControlResponse::Error(format!("Unknown resource alias: {}", resource_alias)));
                 }
             } else {
-                println!("Unknown peer alias: {}", parts[1]);
+                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", peer_alias)));
             }
         }
-        "add" => {
-            if parts.len() < 2 {
-                println!("Usage: add <file_path>");
-                return;
-            }
-            let raw_path = parts[1];
-            let expanded_path = if raw_path.starts_with("~/") {
+        ControlMessage::AddResource { path } => {
+            let expanded_path = if path.starts_with("~/") {
                 let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
-                raw_path.replacen("~", &home, 1)
+                path.replacen("~", &home, 1)
             } else {
-                raw_path.to_string()
+                path
             };
-            
-            let path = PathBuf::from(expanded_path);
-            match store.add_resource(path) {
+            let p = PathBuf::from(expanded_path);
+            match store.add_resource(p) {
                 Ok((id, info)) => {
                     let alias = aliases.add_resource(id.clone());
-                    println!("Added resource {} -> {:?} (alias: {})", info.name, id, alias);
+                    let _ = sender.send(ControlResponse::ResourceAdded { alias, id });
                 }
                 Err(e) => {
-                    println!("Failed to add resource: {}", e);
+                    let _ = sender.send(ControlResponse::Error(e.to_string()));
                 }
             }
-        }
-        _ => {
-            println!("Unknown command. Available: connect, peers, list, get, add");
         }
     }
 }
@@ -197,6 +186,7 @@ fn handle_message(
     store: &mut crate::resource::LocalResourceStore, 
     download_mgr: &mut crate::resource::DownloadManager, 
     aliases: &mut AliasRegistry,
+    req_tracker: &mut crate::request_tracker::RequestTracker,
     peer_id: crate::identity::PeerId, 
     msg: Message
 ) {
@@ -209,11 +199,21 @@ fn handle_message(
         Message::ResourceList { request_id, resources } => {
             let alias = aliases.add_peer(peer_id.clone());
             println!("[Protocol] Received resources from {}:", alias);
+            
+            let mut ctrl_resources = Vec::new();
             for res in &resources {
                 let r_alias = aliases.add_resource(res.id.clone());
-                // We should cache the info here so `get` can use it!
                 aliases.cache_info(res.clone());
-                println!(" - {} ({} bytes, id: {:?}, alias: {})", res.name, res.size, res.id, r_alias);
+                ctrl_resources.push(CtrlResourceInfo {
+                    alias: r_alias,
+                    id: res.id.clone(),
+                    name: res.name.clone(),
+                    size: res.size,
+                });
+            }
+
+            if let Some(sender) = req_tracker.complete(request_id) {
+                let _ = sender.send(ControlResponse::ResourceList(ctrl_resources));
             }
         }
         Message::GetChunk { request_id, id, offset, length } => {
