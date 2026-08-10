@@ -4,7 +4,6 @@ use std::io::{Error, ErrorKind, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use crate::protocol::{ResourceInfo, message::types::ResourceId};
-use crate::fs_dir::downloads_dir;
 
 pub struct ActiveDownload {
     pub info: ResourceInfo,
@@ -16,17 +15,19 @@ pub struct ActiveDownload {
 
 pub struct DownloadManager {
     downloads: HashMap<ResourceId, ActiveDownload>,
+    downloads_dir: PathBuf,
 }
 
 impl DownloadManager {
-    pub fn new() -> Self {
+    pub fn new(downloads_dir: PathBuf) -> Self {
         Self {
             downloads: HashMap::new(),
+            downloads_dir,
         }
     }
 
     pub fn start_download(&mut self, info: &ResourceInfo, chunk_size: u32) -> Result<(), Error> {
-        let temp_path = downloads_dir().join(format!(".tmp_{:?}", info.id));
+        let temp_path = self.downloads_dir.join(format!(".tmp_{:?}", info.id));
         let temp_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -85,7 +86,7 @@ impl DownloadManager {
 
     pub fn complete_download(&mut self, id: &ResourceId) -> Result<(), Error> {
         if let Some(download) = self.downloads.remove(id) {
-            let final_path = downloads_dir().join(&download.info.name);
+            let final_path = self.downloads_dir.join(&download.info.name);
             std::fs::rename(&download.temp_path, &final_path)?;
             Ok(())
         } else {
