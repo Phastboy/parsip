@@ -1,8 +1,9 @@
 use ed25519_dalek::VerifyingKey;
 use sha2::{Digest, Sha256};
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct PeerId([u8; 32]);
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PeerId(pub [u8; 32]);
 
 impl PeerId {
     pub fn from_public_key(vk: &VerifyingKey) -> Self {

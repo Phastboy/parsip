@@ -1,4 +1,6 @@
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct ResourceId(pub [u8; 32]);
 
 #[derive(Debug, Clone)]
