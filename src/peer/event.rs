@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
-use std::sync::mpsc::Sender;
+use crate::daemon::control::{ControlMessage, ControlResponse};
 use crate::identity::PeerId;
 use crate::protocol::Message;
-use crate::daemon::control::{ControlMessage, ControlResponse};
+use std::net::SocketAddr;
+use std::sync::mpsc::Sender;
 
 pub enum PeerEvent {
     NewConnection(PeerId),

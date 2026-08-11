@@ -1,6 +1,6 @@
 use ed25519_dalek::VerifyingKey;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use serde::{Serialize, Deserialize};
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerId(pub [u8; 32]);

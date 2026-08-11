@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -17,7 +17,7 @@ impl Default for Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
         let parsip_dir = base.join(".parsip");
-        
+
         Self {
             listen_port: 9000,
             shared_dir: parsip_dir.join("shared"),
@@ -42,7 +42,7 @@ impl Config {
                 eprintln!("Warning: Failed to parse config.toml, using defaults.");
             }
         }
-        
+
         Self::default()
     }
 
@@ -52,12 +52,11 @@ impl Config {
             .unwrap_or_else(|_| PathBuf::from("."));
         let parsip_dir = base.join(".parsip");
         std::fs::create_dir_all(&parsip_dir)?;
-        
+
         let config_path = parsip_dir.join("config.toml");
-        let content = toml::to_string(self).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
-        
+        let content = toml::to_string(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
         fs::write(config_path, content)
     }
 }

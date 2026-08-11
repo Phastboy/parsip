@@ -1,16 +1,25 @@
-use serde::{Deserialize, Serialize};
 use crate::identity::PeerId;
 use crate::protocol::message::types::ResourceId;
+use serde::{Deserialize, Serialize};
 
 /// Represents a message sent from the CLI Client to the Daemon over the local TCP control socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControlMessage {
     Scan,
-    Connect { alias: String },
+    Connect {
+        alias: String,
+    },
     ListPeers,
-    ListResources { peer_alias: String },
-    GetResource { peer_alias: String, resource_alias: String },
-    AddResource { path: String },
+    ListResources {
+        peer_alias: String,
+    },
+    GetResource {
+        peer_alias: String,
+        resource_alias: String,
+    },
+    AddResource {
+        path: String,
+    },
 }
 
 /// Represents a response sent from the Daemon back to the CLI Client.

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use crate::identity::PeerId;
 use crate::protocol::message::types::ResourceId;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -31,7 +31,11 @@ impl TransferManager {
         self.transfers.insert(transfer.request_id, transfer);
     }
 
-    pub fn update_progress(&mut self, request_id: u32, bytes_added: u64) -> Option<(u64, u64, f64)> {
+    pub fn update_progress(
+        &mut self,
+        request_id: u32,
+        bytes_added: u64,
+    ) -> Option<(u64, u64, f64)> {
         if let Some(t) = self.transfers.get_mut(&request_id) {
             t.bytes_transferred += bytes_added;
             let elapsed_ms = t.last_report_time.elapsed().as_millis();
@@ -57,7 +61,9 @@ impl TransferManager {
     /// Drain all active transfers for a peer that just disconnected.
     /// Returns the list so the caller can cancel their pending CLI requests.
     pub fn cancel_for_peer(&mut self, peer_id: &PeerId) -> Vec<Transfer> {
-        let ids: Vec<u32> = self.transfers.values()
+        let ids: Vec<u32> = self
+            .transfers
+            .values()
             .filter(|t| &t.peer_id == peer_id)
             .map(|t| t.request_id)
             .collect();
@@ -69,5 +75,66 @@ impl TransferManager {
     #[allow(dead_code)]
     pub fn list(&self) -> Vec<Transfer> {
         self.transfers.values().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transfer_progress() {
+        let mut mgr = TransferManager::new();
+        let t = Transfer {
+            request_id: 1,
+            peer_id: PeerId([0; 32]),
+            resource_id: ResourceId([1; 32]),
+            is_download: true,
+            bytes_transferred: 0,
+            bytes_total: 1000,
+            start_time: std::time::Instant::now(),
+            last_report_time: std::time::Instant::now() - std::time::Duration::from_millis(250), // force update
+            last_report_bytes: 0,
+        };
+        mgr.register(t);
+
+        let progress = mgr.update_progress(1, 100);
+        assert!(progress.is_some());
+        let (transferred, total, mbps) = progress.unwrap();
+        assert_eq!(transferred, 100);
+        assert_eq!(total, 1000);
+        assert!(mbps > 0.0);
+    }
+
+    #[test]
+    fn test_cancel_for_peer() {
+        let mut mgr = TransferManager::new();
+        let p1 = PeerId([1; 32]);
+        let p2 = PeerId([2; 32]);
+
+        let mut t1 = Transfer {
+            request_id: 1,
+            peer_id: p1.clone(),
+            resource_id: ResourceId([1; 32]),
+            is_download: true,
+            bytes_transferred: 0,
+            bytes_total: 100,
+            start_time: std::time::Instant::now(),
+            last_report_time: std::time::Instant::now(),
+            last_report_bytes: 0,
+        };
+        let mut t2 = t1.clone();
+        t2.request_id = 2;
+        t2.peer_id = p2.clone(); // different peer
+
+        mgr.register(t1);
+        mgr.register(t2);
+
+        let cancelled = mgr.cancel_for_peer(&p1);
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(cancelled[0].request_id, 1);
+
+        assert!(mgr.complete(1).is_none());
+        assert!(mgr.complete(2).is_some()); // t2 should still be there
     }
 }

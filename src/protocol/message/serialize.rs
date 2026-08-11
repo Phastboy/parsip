@@ -4,7 +4,7 @@ use crate::protocol::message::types::Message;
 impl Into<Frame> for &Message {
     fn into(self) -> Frame {
         let msg_type = self.message_type();
-        
+
         let payload = match self {
             Message::Hello { public_key, nonce } => {
                 let mut p = Vec::with_capacity(64);
@@ -18,7 +18,10 @@ impl Into<Frame> for &Message {
                 p.extend_from_slice(&request_id.to_be_bytes());
                 p
             }
-            Message::ResourceList { request_id, resources } => {
+            Message::ResourceList {
+                request_id,
+                resources,
+            } => {
                 let mut p = Vec::new();
                 p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&(resources.len() as u32).to_be_bytes());
@@ -37,7 +40,12 @@ impl Into<Frame> for &Message {
                 p.extend_from_slice(&id.0);
                 p
             }
-            Message::ResourceChunk { request_id, id, offset, data } => {
+            Message::ResourceChunk {
+                request_id,
+                id,
+                offset,
+                data,
+            } => {
                 let mut p = Vec::with_capacity(4 + 32 + 8 + data.len());
                 p.extend_from_slice(&request_id.to_be_bytes());
                 p.extend_from_slice(&id.0);

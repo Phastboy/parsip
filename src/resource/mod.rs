@@ -1,7 +1,7 @@
-pub mod store;
 pub mod download;
+pub mod store;
 pub mod transfer;
 
-pub use store::LocalResourceStore;
 pub use download::DownloadManager;
-pub use transfer::{TransferManager, Transfer};
+pub use store::LocalResourceStore;
+pub use transfer::{Transfer, TransferManager};

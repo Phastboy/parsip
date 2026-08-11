@@ -1,8 +1,8 @@
+use socket2::{Domain, Protocol, Socket, Type};
+use std::io::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::thread;
-use socket2::{Domain, Protocol, Socket, Type};
-use std::io::Error;
 
 use crate::identity::PeerId;
 use crate::peer::PeerEvent;
@@ -14,7 +14,12 @@ pub const MAGIC_RESPONSE: &[u8; 6] = b"PARRES";
 pub struct Discovery;
 
 impl Discovery {
-    pub fn start(tcp_listen_port: u16, my_id: PeerId, my_nickname: String, event_tx: Sender<PeerEvent>) -> Result<(), Error> {
+    pub fn start(
+        tcp_listen_port: u16,
+        my_id: PeerId,
+        my_nickname: String,
+        event_tx: Sender<PeerEvent>,
+    ) -> Result<(), Error> {
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT));
 
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -53,7 +58,8 @@ impl Discovery {
 
                                 if remote_peer_id != my_id {
                                     if is_request {
-                                        let mut payload = Vec::with_capacity(40 + my_nickname.len());
+                                        let mut payload =
+                                            Vec::with_capacity(40 + my_nickname.len());
                                         payload.extend_from_slice(MAGIC_RESPONSE);
                                         payload.extend_from_slice(&tcp_listen_port.to_be_bytes());
                                         payload.extend_from_slice(&my_id.to_bytes());
@@ -65,7 +71,11 @@ impl Discovery {
 
                                     let mut target_addr = src;
                                     target_addr.set_port(remote_tcp_port);
-                                    let _ = event_tx.send(PeerEvent::Discovered(remote_peer_id, target_addr, nickname));
+                                    let _ = event_tx.send(PeerEvent::Discovered(
+                                        remote_peer_id,
+                                        target_addr,
+                                        nickname,
+                                    ));
                                 }
                             }
                         }
@@ -78,7 +88,11 @@ impl Discovery {
         Ok(())
     }
 
-    pub fn broadcast_scan(tcp_listen_port: u16, my_id: &PeerId, my_nickname: &str) -> Result<(), Error> {
+    pub fn broadcast_scan(
+        tcp_listen_port: u16,
+        my_id: &PeerId,
+        my_nickname: &str,
+    ) -> Result<(), Error> {
         let mut payload = Vec::with_capacity(40 + my_nickname.len());
         payload.extend_from_slice(MAGIC_REQUEST);
         payload.extend_from_slice(&tcp_listen_port.to_be_bytes());
@@ -116,7 +130,10 @@ impl Discovery {
             for line in entries.lines() {
                 let trimmed = line.trim();
                 // Lines like: "192.168.0.0/24" or "  |-- 192.168.0.100"
-                if let Some(addr_str) = trimmed.strip_prefix("|-- ").or_else(|| trimmed.strip_prefix("+-- ")) {
+                if let Some(addr_str) = trimmed
+                    .strip_prefix("|-- ")
+                    .or_else(|| trimmed.strip_prefix("+-- "))
+                {
                     if let Ok(ip) = addr_str.trim().parse::<Ipv4Addr>() {
                         if !ip.is_loopback() && !ip.is_unspecified() {
                             current_local = Some(ip);

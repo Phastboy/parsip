@@ -1,7 +1,7 @@
+use crate::daemon::control::ControlResponse;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
-use crate::daemon::control::ControlResponse;
 
 pub struct RequestTracker {
     next_id: AtomicU32,

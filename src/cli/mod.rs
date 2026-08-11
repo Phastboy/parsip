@@ -1,6 +1,6 @@
-use std::net::TcpStream;
-use std::io::{BufRead, BufReader, Write, Error, ErrorKind};
 use crate::daemon::control::{ControlMessage, ControlResponse};
+use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
+use std::net::TcpStream;
 
 pub fn run(args: &[String]) -> Result<(), Error> {
     if args.len() < 2 {
@@ -16,7 +16,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
             return Ok(());
         }
         let mut config = crate::config::Config::load();
-        
+
         match args[2].as_str() {
             "show" => {
                 println!("Nickname: {}", config.nickname);
@@ -35,7 +35,9 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 match key {
                     "nickname" => config.nickname = val,
                     "shared" | "shared_dir" => config.shared_dir = std::path::PathBuf::from(val),
-                    "downloads" | "downloads_dir" => config.downloads_dir = std::path::PathBuf::from(val),
+                    "downloads" | "downloads_dir" => {
+                        config.downloads_dir = std::path::PathBuf::from(val)
+                    }
                     "port" | "listen_port" => {
                         if let Ok(p) = val.parse::<u16>() {
                             config.listen_port = p;
@@ -69,23 +71,27 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 println!("Usage: parsip connect <alias>");
                 return Ok(());
             }
-            ControlMessage::Connect { alias: args[2].clone() }
+            ControlMessage::Connect {
+                alias: args[2].clone(),
+            }
         }
         "list" => {
             if args.len() < 3 {
                 println!("Usage: parsip list <peer_alias>");
                 return Ok(());
             }
-            ControlMessage::ListResources { peer_alias: args[2].clone() }
+            ControlMessage::ListResources {
+                peer_alias: args[2].clone(),
+            }
         }
         "get" => {
             if args.len() < 4 {
                 println!("Usage: parsip get <peer_alias> <resource_alias>");
                 return Ok(());
             }
-            ControlMessage::GetResource { 
-                peer_alias: args[2].clone(), 
-                resource_alias: args[3].clone() 
+            ControlMessage::GetResource {
+                peer_alias: args[2].clone(),
+                resource_alias: args[3].clone(),
             }
         }
         "add" => {
@@ -93,7 +99,9 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 println!("Usage: parsip add <file_path>");
                 return Ok(());
             }
-            ControlMessage::AddResource { path: args[2].clone() }
+            ControlMessage::AddResource {
+                path: args[2].clone(),
+            }
         }
         _ => {
             println!("Unknown command: {}", cmd_str);
@@ -113,15 +121,15 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     stream.write_all(format!("{}\n", req_json).as_bytes())?;
 
     let mut reader = BufReader::new(stream);
-    
+
     loop {
         let mut resp_line = String::new();
         if reader.read_line(&mut resp_line).is_err() || resp_line.is_empty() {
             break;
         }
 
-        let resp: ControlResponse = serde_json::from_str(&resp_line)
-            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let resp: ControlResponse =
+            serde_json::from_str(&resp_line).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
         match resp {
             ControlResponse::Ok => {
@@ -169,17 +177,30 @@ pub fn run(args: &[String]) -> Result<(), Error> {
             }
             ControlResponse::DownloadProgress { bytes, total, mbps } => {
                 use std::io::Write;
-                print!("\rDownloading... {} / {} ({:.2} MB/s)", format_size(bytes), format_size(total), mbps);
+                print!(
+                    "\rDownloading... {} / {} ({:.2} MB/s)",
+                    format_size(bytes),
+                    format_size(total),
+                    mbps
+                );
                 let _ = std::io::stdout().flush();
             }
-            ControlResponse::DownloadComplete { bytes, elapsed_secs } => {
+            ControlResponse::DownloadComplete {
+                bytes,
+                elapsed_secs,
+            } => {
                 let mb = bytes as f64 / 1_000_000.0;
                 let mb_per_sec = if elapsed_secs > 0.0 {
                     mb / elapsed_secs
                 } else {
                     0.0
                 };
-                println!("\nDownloaded {} in {:.2}s ({:.2} MB/s)", format_size(bytes), elapsed_secs, mb_per_sec);
+                println!(
+                    "\nDownloaded {} in {:.2}s ({:.2} MB/s)",
+                    format_size(bytes),
+                    elapsed_secs,
+                    mb_per_sec
+                );
                 break;
             }
         }

@@ -2,6 +2,11 @@
 name = "parsip"
 version = "0.1.0"
 edition = "2024"
+description = "A decentralized, high-speed, peer-to-peer file sharing application for local networks."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tgenericx/parsip"
+keywords = ["p2p", "file-sharing", "lan", "decentralized"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 daemonize = "0.5.0"

@@ -1,10 +1,10 @@
-use std::io::{Error, ErrorKind};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use std::io::{Error, ErrorKind};
 
+use crate::connection::Connection;
 use crate::identity::{Identity, PeerId};
 use crate::protocol::{Decoder, Encoder, LengthPrefixCodec, Message};
 use crate::random::random_bytes_32;
-use crate::connection::Connection;
 
 impl Connection {
     pub fn handshake(&mut self, identity: &Identity) -> Result<PeerId, Error> {
@@ -13,15 +13,23 @@ impl Connection {
         let my_nonce = random_bytes_32();
         let mut my_pubkey_bytes = [0u8; 32];
         my_pubkey_bytes.copy_from_slice(&identity.public_key_bytes());
-        
-        let hello_msg = Message::Hello { public_key: my_pubkey_bytes, nonce: my_nonce };
+
+        let hello_msg = Message::Hello {
+            public_key: my_pubkey_bytes,
+            nonce: my_nonce,
+        };
         codec.encode(&(&hello_msg).into(), &mut self.stream)?;
 
         let their_hello_frame = match codec.decode(&mut self.stream)? {
             Some(frame) => frame,
-            None => return Err(Error::new(ErrorKind::ConnectionAborted, "Peer disconnected during handshake")),
+            None => {
+                return Err(Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "Peer disconnected during handshake",
+                ));
+            }
         };
-        
+
         let their_hello = Message::try_from(their_hello_frame)?;
         let (their_pubkey_bytes, their_nonce) = match their_hello {
             Message::Hello { public_key, nonce } => (public_key, nonce),
@@ -35,26 +43,43 @@ impl Connection {
         let my_signature = identity.sign(&their_nonce);
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&my_signature.to_bytes());
-        
-        let proof_msg = Message::HelloProof { signature: sig_bytes };
+
+        let proof_msg = Message::HelloProof {
+            signature: sig_bytes,
+        };
         codec.encode(&(&proof_msg).into(), &mut self.stream)?;
 
         let their_proof_frame = match codec.decode(&mut self.stream)? {
             Some(frame) => frame,
-            None => return Err(Error::new(ErrorKind::ConnectionAborted, "Peer disconnected during proof exchange")),
+            None => {
+                return Err(Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "Peer disconnected during proof exchange",
+                ));
+            }
         };
-        
+
         let their_proof = Message::try_from(their_proof_frame)?;
         let their_signature_bytes = match their_proof {
             Message::HelloProof { signature } => signature,
-            _ => return Err(Error::new(ErrorKind::InvalidData, "Expected HelloProof message")),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Expected HelloProof message",
+                ));
+            }
         };
 
         let their_signature = Signature::from_bytes(&their_signature_bytes);
 
         their_verifying_key
             .verify(&my_nonce, &their_signature)
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "Handshake signature verification failed"))?;
+            .map_err(|_| {
+                Error::new(
+                    ErrorKind::InvalidData,
+                    "Handshake signature verification failed",
+                )
+            })?;
 
         self.remote_peer_id = Some(their_id.clone());
         Ok(their_id)
