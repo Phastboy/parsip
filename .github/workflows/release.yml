@@ -71,7 +71,7 @@ jobs:
         run: cargo install cross
 
       - name: Build binary
-        if: !matrix.use-cross
+        if: ${{ !matrix.use-cross }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build binary (cross)
