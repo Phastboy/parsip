@@ -100,7 +100,26 @@ pub fn handle_event(
             println!("[Event] New connection established with {:?} (alias: {})", peer_id, alias);
         }
         PeerEvent::Disconnected(peer_id) => {
-            println!("[Event] Peer {:?} disconnected", peer_id);
+            let alias = aliases.peer_aliases.iter()
+                .find(|(_, id)| *id == &peer_id)
+                .map(|(a, _)| a.clone())
+                .unwrap_or_else(|| format!("{:?}", peer_id));
+            println!("[Event] Peer {} disconnected", alias);
+
+            // Cancel all in-flight transfers for this peer and unblock any waiting CLI
+            // commands. Without this, `parsip get` would hang forever after a disconnect.
+            let cancelled = transfer_mgr.cancel_for_peer(&peer_id);
+            for t in cancelled {
+                // Remove the partial temp file from the download manager
+                let _ = download_mgr.cancel_download(&t.resource_id);
+                // Unblock the CLI with an error response
+                if let Some(sender) = req_tracker.complete(t.request_id) {
+                    let _ = sender.send(ControlResponse::Error(
+                        format!("Transfer failed: peer {} disconnected mid-transfer ({} / {} bytes received)",
+                            alias, t.bytes_transferred, t.bytes_total)
+                    ));
+                }
+            }
         }
         PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, transfer_mgr, aliases, req_tracker, peer_id, msg),
         PeerEvent::ControlRequest(cmd, sender) => handle_control(config, peer, store, download_mgr, transfer_mgr, aliases, req_tracker, cmd, sender),

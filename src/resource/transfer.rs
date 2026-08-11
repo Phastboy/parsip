@@ -54,6 +54,18 @@ impl TransferManager {
         self.transfers.remove(&request_id)
     }
 
+    /// Drain all active transfers for a peer that just disconnected.
+    /// Returns the list so the caller can cancel their pending CLI requests.
+    pub fn cancel_for_peer(&mut self, peer_id: &PeerId) -> Vec<Transfer> {
+        let ids: Vec<u32> = self.transfers.values()
+            .filter(|t| &t.peer_id == peer_id)
+            .map(|t| t.request_id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.transfers.remove(&id))
+            .collect()
+    }
+
     #[allow(dead_code)]
     pub fn list(&self) -> Vec<Transfer> {
         self.transfers.values().cloned().collect()

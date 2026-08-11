@@ -72,4 +72,15 @@ impl DownloadManager {
             Err(Error::new(ErrorKind::NotFound, "Download not found"))
         }
     }
+
+    /// Cancel a download mid-flight (e.g. peer disconnected) and delete the temp file.
+    pub fn cancel_download(&mut self, id: &ResourceId) -> Result<(), Error> {
+        if let Some(download) = self.downloads.remove(id) {
+            // Best-effort cleanup; ignore errors (temp file may already be gone)
+            let _ = fs::remove_file(&download.temp_path);
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::NotFound, "Download not found"))
+        }
+    }
 }
