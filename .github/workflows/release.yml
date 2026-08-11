@@ -7,6 +7,9 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write
+
 jobs:
   publish-crates-io:
     name: Publish to crates.io
@@ -31,7 +34,7 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
           name: ${{ github.ref_type == 'tag' && github.ref_name || 'Nightly Build' }}
           prerelease: ${{ github.ref_type != 'tag' }}
-          generate_release_notes: true
+          generate_release_notes: ${{ github.ref_type == 'tag' }}
 
   build-release:
     name: Build and Upload Release Asset
