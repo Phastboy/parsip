@@ -1,24 +1,24 @@
-use std::io::Error;
+use log::{LevelFilter, error};
+use simplelog::{Config as LogConfig, WriteLogger};
 use std::env;
-use std::path::PathBuf;
-use log::{error, LevelFilter};
-use simplelog::{WriteLogger, Config as LogConfig};
 use std::fs;
 use std::fs::File;
+use std::io::Error;
+use std::path::PathBuf;
 
-mod protocol;
-mod peer;
+mod cli;
+mod config;
 mod connection;
 mod connection_manager;
-mod identity;
-mod random;
-mod discovery;
-mod config;
-mod event_handler;
-mod resource;
-mod request_tracker;
 mod daemon;
-mod cli;
+mod discovery;
+mod event_handler;
+mod identity;
+mod peer;
+mod protocol;
+mod random;
+mod request_tracker;
+mod resource;
 
 fn main() -> Result<(), Error> {
     let mut config = config::Config::load();
@@ -58,7 +58,11 @@ fn main() -> Result<(), Error> {
         }
 
         // Initialize File Logger
-        if let Ok(log_file) = File::options().create(true).append(true).open(&config.log_file) {
+        if let Ok(log_file) = File::options()
+            .create(true)
+            .append(true)
+            .open(&config.log_file)
+        {
             let _ = WriteLogger::init(LevelFilter::Info, LogConfig::default(), log_file);
         }
 
@@ -107,11 +111,13 @@ fn main() -> Result<(), Error> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
         let pid_file = base.join(".parsip").join("parsip.pid");
-        
+
         if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
                 // Send SIGTERM to the pid using kill command (libc::kill is better but standard `kill` works)
-                let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
                 println!("Stopped parsip daemon (PID: {})", pid);
                 let _ = std::fs::remove_file(pid_file);
             } else {
@@ -128,18 +134,20 @@ fn main() -> Result<(), Error> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
         let pid_file = base.join(".parsip").join("parsip.pid");
-        
+
         // Stop logic
         if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
                 println!("Stopped parsip daemon (PID: {})", pid);
                 let _ = std::fs::remove_file(&pid_file);
                 // Give it a moment to fully shut down
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
-        
+
         // Start logic
         let parsip_dir = base.join(".parsip");
         let log_file = parsip_dir.join("daemon_out.log");
@@ -172,6 +180,6 @@ fn main() -> Result<(), Error> {
     if let Err(e) = cli::run(&args) {
         eprintln!("CLI Error: {}", e);
     }
-    
+
     Ok(())
 }

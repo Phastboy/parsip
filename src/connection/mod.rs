@@ -1,9 +1,9 @@
 pub mod handshake;
 pub mod reader;
 
+use std::io::Error;
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
-use std::io::Error;
 
 use crate::identity::PeerId;
 use crate::protocol::{Encoder, Frame, LengthPrefixCodec};
@@ -25,7 +25,10 @@ pub struct ConnectionReader {
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, remote_addr: SocketAddr) -> Result<(Self, ConnectionReader), Error> {
+    pub fn new(
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+    ) -> Result<(Self, ConnectionReader), Error> {
         let _ = stream.set_nonblocking(false);
         let _ = stream.set_nodelay(true);
 
@@ -56,8 +59,14 @@ impl Connection {
 
         let read_stream = stream.try_clone()?;
 
-        let writer = Self { remote_peer_id: None, stream };
-        let reader = ConnectionReader { stream: read_stream, remote_addr };
+        let writer = Self {
+            remote_peer_id: None,
+            stream,
+        };
+        let reader = ConnectionReader {
+            stream: read_stream,
+            remote_addr,
+        };
 
         Ok((writer, reader))
     }

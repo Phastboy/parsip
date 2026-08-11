@@ -1,7 +1,7 @@
-pub mod frame;
 pub mod codec;
+pub mod frame;
 pub mod message;
 
+pub use codec::{Decoder, Encoder, LengthPrefixCodec};
 pub use frame::Frame;
-pub use codec::{Encoder, Decoder, LengthPrefixCodec};
 pub use message::{Message, ResourceInfo};

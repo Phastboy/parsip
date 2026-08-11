@@ -1,18 +1,25 @@
-use std::net::{TcpListener, TcpStream, SocketAddr};
-use std::thread;
-use std::sync::Arc;
 use std::io::{Error, ErrorKind};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::thread;
 
 use crate::connection::{Connection, Direction};
 use crate::identity::PeerId;
 use crate::peer::{Peer, PeerEvent};
 
 impl Peer {
-    pub(crate) fn register_connection(&self, stream: TcpStream, remote_addr: SocketAddr, direction: Direction) -> Result<PeerId, Error> {
+    pub(crate) fn register_connection(
+        &self,
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+        direction: Direction,
+    ) -> Result<PeerId, Error> {
         let (connection, reader) = Connection::new(stream, remote_addr)?;
         let connection_arc = Arc::new(std::sync::Mutex::new(connection));
 
-        let conn_id = self.manager.insert_pending(connection_arc.clone(), direction)?;
+        let conn_id = self
+            .manager
+            .insert_pending(connection_arc.clone(), direction)?;
 
         let handshake_result = {
             let mut conn = connection_arc.lock().unwrap();
@@ -29,17 +36,23 @@ impl Peer {
 
         if their_id == self.id {
             self.manager.remove(conn_id);
-            return Err(Error::new(ErrorKind::InvalidData, "Rejected self-connection"));
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Rejected self-connection",
+            ));
         }
 
-        if let Err(e) = self.manager.promote_to_established(conn_id, &self.id, their_id.clone()) {
+        if let Err(e) = self
+            .manager
+            .promote_to_established(conn_id, &self.id, their_id.clone())
+        {
             // manager already dropped our connection if it threw an error
             return Err(e);
         }
 
         // If we reach here, we survived deduplication and the connection is officially registered.
         let manager_for_cleanup = self.manager.clone();
-        
+
         let tx_clone = self.event_tx.clone();
         let peer_id_for_loop = their_id.clone();
 
@@ -47,7 +60,9 @@ impl Peer {
             manager_for_cleanup.remove(conn_id);
         });
 
-        let _ = self.event_tx.send(PeerEvent::NewConnection(their_id.clone()));
+        let _ = self
+            .event_tx
+            .send(PeerEvent::NewConnection(their_id.clone()));
 
         Ok(their_id)
     }
@@ -62,8 +77,15 @@ impl Peer {
                         let peer_clone2 = peer_clone.clone();
 
                         thread::spawn(move || {
-                            if let Err(e) = peer_clone2.register_connection(stream, peer_address, Direction::Incoming) {
-                                eprintln!("Failed to register incoming connection from {}: {}", peer_address, e);
+                            if let Err(e) = peer_clone2.register_connection(
+                                stream,
+                                peer_address,
+                                Direction::Incoming,
+                            ) {
+                                eprintln!(
+                                    "Failed to register incoming connection from {}: {}",
+                                    peer_address, e
+                                );
                             }
                         });
                     }

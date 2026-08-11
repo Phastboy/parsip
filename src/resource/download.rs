@@ -39,7 +39,10 @@ impl DownloadManager {
     pub fn start_download(&mut self, info: &ResourceInfo) -> Result<(), Error> {
         // Prevent duplicate downloads silently overwriting each other
         if self.downloads.contains_key(&info.id) {
-            return Err(Error::new(ErrorKind::AlreadyExists, "Download already in progress for this resource"));
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                "Download already in progress for this resource",
+            ));
         }
 
         let temp_path = self.downloads_dir.join(format!(".tmp_{:?}", info.id));
@@ -91,7 +94,10 @@ impl DownloadManager {
         if let Some(download) = self.downloads.get_mut(id) {
             // Clone the data once (to own it across the channel)
             if download.writer_tx.send(Some(data.to_vec())).is_err() {
-                return Err(Error::new(ErrorKind::BrokenPipe, "Writer thread exited prematurely"));
+                return Err(Error::new(
+                    ErrorKind::BrokenPipe,
+                    "Writer thread exited prematurely",
+                ));
             }
             download.received_bytes += data.len() as u64;
             return Ok(download.received_bytes >= download.info.size);

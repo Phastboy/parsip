@@ -1,11 +1,11 @@
-pub mod event;
 pub mod acceptor;
 pub mod connector;
+pub mod event;
 
+use std::io::Error;
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::io::Error;
 
 use crate::connection_manager::ConnectionManager;
 use crate::identity::{Identity, PeerId};

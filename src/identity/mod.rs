@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ed25519_dalek::{Signature, Signer, SigningKey};
 use crate::random::random_bytes_32;
+use ed25519_dalek::{Signature, Signer, SigningKey};
 
 pub mod peer_id;
 pub use peer_id::PeerId;
@@ -31,9 +31,15 @@ impl Identity {
                     let signing_key = SigningKey::from_bytes(&seed);
                     let peer_id = PeerId::from_public_key(&signing_key.verifying_key());
                     println!("Loaded existing identity from {:?}", path);
-                    return Self { signing_key, peer_id };
+                    return Self {
+                        signing_key,
+                        peer_id,
+                    };
                 }
-                eprintln!("Warning: identity file at {:?} is malformed, regenerating", path);
+                eprintln!(
+                    "Warning: identity file at {:?} is malformed, regenerating",
+                    path
+                );
             }
         }
 
@@ -43,7 +49,10 @@ impl Identity {
 
         if let Some(parent) = path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
-                eprintln!("Warning: could not create identity directory {:?}: {}", parent, e);
+                eprintln!(
+                    "Warning: could not create identity directory {:?}: {}",
+                    parent, e
+                );
             }
         }
         if let Err(e) = fs::write(&path, signing_key.to_bytes()) {
@@ -52,7 +61,10 @@ impl Identity {
             println!("Generated and saved new identity at {:?}", path);
         }
 
-        Self { signing_key, peer_id }
+        Self {
+            signing_key,
+            peer_id,
+        }
     }
 
     pub fn public_key_bytes(&self) -> [u8; 32] {
@@ -61,5 +73,39 @@ impl Identity {
 
     pub fn sign(&self, message: &[u8]) -> Signature {
         self.signing_key.sign(message)
+    }
+
+    /// Generate an in-memory identity without touching the filesystem (useful for tests)
+    pub fn generate_ephemeral() -> Self {
+        let seed = random_bytes_32();
+        let signing_key = SigningKey::from_bytes(&seed);
+        let peer_id = PeerId::from_public_key(&signing_key.verifying_key());
+        Self {
+            signing_key,
+            peer_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ephemeral_identity() {
+        let id1 = Identity::generate_ephemeral();
+        let id2 = Identity::generate_ephemeral();
+        assert_ne!(id1.peer_id.0, id2.peer_id.0); // very unlikely to collide
+    }
+
+    #[test]
+    fn test_signing() {
+        use ed25519_dalek::Verifier;
+        let id = Identity::generate_ephemeral();
+        let msg = b"test message";
+        let sig = id.sign(msg);
+
+        let vk = id.signing_key.verifying_key();
+        assert!(vk.verify(msg, &sig).is_ok());
     }
 }

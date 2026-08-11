@@ -1,7 +1,7 @@
-use std::net::{SocketAddr, TcpStream};
-use std::thread;
-use std::sync::mpsc::{self, Receiver};
 use std::io::Error;
+use std::net::{SocketAddr, TcpStream};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 
 use crate::connection::Direction;
 use crate::identity::PeerId;
@@ -29,7 +29,10 @@ impl Peer {
                     let _ = tx.send(Ok(peer_id));
                 }
                 Err(e) => {
-                    eprintln!("Failed to register outgoing connection to {}: {}", target, e);
+                    eprintln!(
+                        "Failed to register outgoing connection to {}: {}",
+                        target, e
+                    );
                     let _ = tx.send(Err(e));
                 }
             }

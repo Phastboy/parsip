@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::peer::{Peer, PeerEvent};
-use crate::protocol::{ResourceInfo, Message, message::types::ResourceId};
 use crate::identity::PeerId;
+use crate::peer::{Peer, PeerEvent};
+use crate::protocol::{Message, ResourceInfo, message::types::ResourceId};
 
 pub struct AliasRegistry {
     pub peer_aliases: HashMap<String, PeerId>,
-    peer_id_to_alias: HashMap<PeerId, String>,     // O(1) reverse lookup
+    peer_id_to_alias: HashMap<PeerId, String>, // O(1) reverse lookup
     resource_aliases: HashMap<String, ResourceId>,
     resource_id_to_alias: HashMap<ResourceId, String>, // O(1) reverse lookup
     resource_info: HashMap<ResourceId, ResourceInfo>,
@@ -49,7 +49,8 @@ impl AliasRegistry {
         }
         let alias = format!("r{}", self.next_resource_id);
         self.next_resource_id += 1;
-        self.resource_id_to_alias.insert(resource_id.clone(), alias.clone());
+        self.resource_id_to_alias
+            .insert(resource_id.clone(), alias.clone());
         self.resource_aliases.insert(alias.clone(), resource_id);
         alias
     }
@@ -73,34 +74,45 @@ impl AliasRegistry {
 
 pub fn handle_event(
     config: &crate::config::Config,
-    peer: &Peer, 
-    store: &mut crate::resource::LocalResourceStore, 
-    download_mgr: &mut crate::resource::DownloadManager, 
+    peer: &Peer,
+    store: &mut crate::resource::LocalResourceStore,
+    download_mgr: &mut crate::resource::DownloadManager,
     transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
-    event: PeerEvent
+    event: PeerEvent,
 ) {
     match event {
         PeerEvent::Discovered(peer_id, addr, nickname) => {
             let alias = aliases.add_peer(peer_id.clone());
             if !aliases.discovered_peers.contains_key(&peer_id) {
-                aliases.discovered_peers.insert(peer_id.clone(), crate::daemon::control::DiscoveredPeerInfo {
-                    alias: alias.clone(),
-                    nickname: nickname.clone(),
-                    address: addr,
-                });
+                aliases.discovered_peers.insert(
+                    peer_id.clone(),
+                    crate::daemon::control::DiscoveredPeerInfo {
+                        alias: alias.clone(),
+                        nickname: nickname.clone(),
+                        address: addr,
+                    },
+                );
                 if !peer.is_connected(&peer_id) {
-                    println!("[Discovery] Found peer {:?} at {} (alias: {}, nickname: {})", peer_id, addr, alias, nickname);
+                    println!(
+                        "[Discovery] Found peer {:?} at {} (alias: {}, nickname: {})",
+                        peer_id, addr, alias, nickname
+                    );
                 }
             }
         }
         PeerEvent::NewConnection(peer_id) => {
             let alias = aliases.add_peer(peer_id.clone());
-            println!("[Event] New connection established with {:?} (alias: {})", peer_id, alias);
+            println!(
+                "[Event] New connection established with {:?} (alias: {})",
+                peer_id, alias
+            );
         }
         PeerEvent::Disconnected(peer_id) => {
-            let alias = aliases.peer_aliases.iter()
+            let alias = aliases
+                .peer_aliases
+                .iter()
                 .find(|(_, id)| *id == &peer_id)
                 .map(|(a, _)| a.clone())
                 .unwrap_or_else(|| format!("{:?}", peer_id));
@@ -121,8 +133,27 @@ pub fn handle_event(
                 }
             }
         }
-        PeerEvent::Message(peer_id, msg) => handle_message(peer, store, download_mgr, transfer_mgr, aliases, req_tracker, peer_id, msg),
-        PeerEvent::ControlRequest(cmd, sender) => handle_control(config, peer, store, download_mgr, transfer_mgr, aliases, req_tracker, cmd, sender),
+        PeerEvent::Message(peer_id, msg) => handle_message(
+            peer,
+            store,
+            download_mgr,
+            transfer_mgr,
+            aliases,
+            req_tracker,
+            peer_id,
+            msg,
+        ),
+        PeerEvent::ControlRequest(cmd, sender) => handle_control(
+            config,
+            peer,
+            store,
+            download_mgr,
+            transfer_mgr,
+            aliases,
+            req_tracker,
+            cmd,
+            sender,
+        ),
         PeerEvent::ScanTimeout(req_id) => {
             if let Some(sender) = req_tracker.complete(req_id) {
                 let mut results = Vec::new();
@@ -135,29 +166,38 @@ pub fn handle_event(
     }
 }
 
+use crate::daemon::control::{
+    ConnectedPeerInfo, ControlMessage, ControlResponse, ResourceInfo as CtrlResourceInfo,
+};
 use std::sync::mpsc::Sender;
-use crate::daemon::control::{ControlMessage, ControlResponse, ConnectedPeerInfo, ResourceInfo as CtrlResourceInfo};
 
 fn handle_control(
     config: &crate::config::Config,
-    peer: &Peer, 
-    store: &mut crate::resource::LocalResourceStore, 
-    download_mgr: &mut crate::resource::DownloadManager, 
+    peer: &Peer,
+    store: &mut crate::resource::LocalResourceStore,
+    download_mgr: &mut crate::resource::DownloadManager,
     transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
     cmd: ControlMessage,
-    sender: Sender<ControlResponse>
+    sender: Sender<ControlResponse>,
 ) {
     match cmd {
         ControlMessage::Scan => {
             aliases.discovered_peers.clear();
             let req_id = req_tracker.next_id();
             req_tracker.register(req_id, sender);
-            
-            if let Err(e) = crate::discovery::Discovery::broadcast_scan(config.listen_port, &peer.id, &config.nickname) {
+
+            if let Err(e) = crate::discovery::Discovery::broadcast_scan(
+                config.listen_port,
+                &peer.id,
+                &config.nickname,
+            ) {
                 if let Some(s) = req_tracker.complete(req_id) {
-                    let _ = s.send(ControlResponse::Error(format!("Failed to broadcast: {}", e)));
+                    let _ = s.send(ControlResponse::Error(format!(
+                        "Failed to broadcast: {}",
+                        e
+                    )));
                 }
                 return;
             }
@@ -169,25 +209,44 @@ fn handle_control(
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = aliases.discovered_peers.values().find(|info| info.alias == alias) {
+            if let Some(info) = aliases
+                .discovered_peers
+                .values()
+                .find(|info| info.alias == alias)
+            {
                 let addr = info.address;
                 let rx = peer.connect(addr);
                 // Block until the connection attempt completes (success or failure).
                 // The background thread handles the TCP handshake.
                 match rx.recv() {
-                    Ok(Ok(_peer_id)) => { let _ = sender.send(ControlResponse::Ok); }
-                    Ok(Err(e)) => { let _ = sender.send(ControlResponse::Error(format!("Connection failed: {}", e))); }
-                    Err(_) => { let _ = sender.send(ControlResponse::Error("Connection thread panicked".to_string())); }
+                    Ok(Ok(_peer_id)) => {
+                        let _ = sender.send(ControlResponse::Ok);
+                    }
+                    Ok(Err(e)) => {
+                        let _ = sender
+                            .send(ControlResponse::Error(format!("Connection failed: {}", e)));
+                    }
+                    Err(_) => {
+                        let _ = sender.send(ControlResponse::Error(
+                            "Connection thread panicked".to_string(),
+                        ));
+                    }
                 }
             } else {
-                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", alias)));
+                let _ = sender.send(ControlResponse::Error(format!(
+                    "Unknown peer alias: {}",
+                    alias
+                )));
             }
         }
         ControlMessage::ListPeers => {
             let mut connected = Vec::new();
             for (alias, id) in &aliases.peer_aliases {
                 if peer.is_connected(id) {
-                    connected.push(ConnectedPeerInfo { alias: alias.clone(), peer_id: id.clone() });
+                    connected.push(ConnectedPeerInfo {
+                        alias: alias.clone(),
+                        peer_id: id.clone(),
+                    });
                 }
             }
             let _ = sender.send(ControlResponse::PeersList(connected));
@@ -198,10 +257,16 @@ fn handle_control(
                 req_tracker.register(req_id, sender);
                 let _ = peer.send(&peer_id, &Message::ListResources { request_id: req_id });
             } else {
-                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", peer_alias)));
+                let _ = sender.send(ControlResponse::Error(format!(
+                    "Unknown peer alias: {}",
+                    peer_alias
+                )));
             }
         }
-        ControlMessage::GetResource { peer_alias, resource_alias } => {
+        ControlMessage::GetResource {
+            peer_alias,
+            resource_alias,
+        } => {
             if let Some(peer_id) = aliases.get_peer(&peer_alias) {
                 if let Some(res_id) = aliases.get_resource(&resource_alias) {
                     if let Some(info) = aliases.get_info(&res_id) {
@@ -219,18 +284,35 @@ fn handle_control(
                                 last_report_time: std::time::Instant::now(),
                                 last_report_bytes: 0,
                             });
-                            let _ = peer.send(&peer_id, &Message::DownloadResource { request_id, id: res_id.clone() });
+                            let _ = peer.send(
+                                &peer_id,
+                                &Message::DownloadResource {
+                                    request_id,
+                                    id: res_id.clone(),
+                                },
+                            );
                         } else {
-                            let _ = sender.send(ControlResponse::Error("Failed to start download".to_string()));
+                            let _ = sender.send(ControlResponse::Error(
+                                "Failed to start download".to_string(),
+                            ));
                         }
                     } else {
-                        let _ = sender.send(ControlResponse::Error(format!("Resource metadata missing. Try 'list {}' first.", peer_alias)));
+                        let _ = sender.send(ControlResponse::Error(format!(
+                            "Resource metadata missing. Try 'list {}' first.",
+                            peer_alias
+                        )));
                     }
                 } else {
-                    let _ = sender.send(ControlResponse::Error(format!("Unknown resource alias: {}", resource_alias)));
+                    let _ = sender.send(ControlResponse::Error(format!(
+                        "Unknown resource alias: {}",
+                        resource_alias
+                    )));
                 }
             } else {
-                let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", peer_alias)));
+                let _ = sender.send(ControlResponse::Error(format!(
+                    "Unknown peer alias: {}",
+                    peer_alias
+                )));
             }
         }
         ControlMessage::AddResource { path } => {
@@ -255,25 +337,37 @@ fn handle_control(
 }
 
 fn handle_message(
-    peer: &Peer, 
-    store: &mut crate::resource::LocalResourceStore, 
-    download_mgr: &mut crate::resource::DownloadManager, 
+    peer: &Peer,
+    store: &mut crate::resource::LocalResourceStore,
+    download_mgr: &mut crate::resource::DownloadManager,
     transfer_mgr: &mut crate::resource::TransferManager,
     aliases: &mut AliasRegistry,
     req_tracker: &mut crate::request_tracker::RequestTracker,
-    peer_id: crate::identity::PeerId, 
-    msg: Message
+    peer_id: crate::identity::PeerId,
+    msg: Message,
 ) {
     match msg {
         Message::ListResources { request_id } => {
-            println!("[Protocol] Peer {:?} requested ListResources (req_id: {})", peer_id, request_id);
+            println!(
+                "[Protocol] Peer {:?} requested ListResources (req_id: {})",
+                peer_id, request_id
+            );
             let resources = store.list_resources();
-            let _ = peer.send(&peer_id, &Message::ResourceList { request_id, resources });
+            let _ = peer.send(
+                &peer_id,
+                &Message::ResourceList {
+                    request_id,
+                    resources,
+                },
+            );
         }
-        Message::ResourceList { request_id, resources } => {
+        Message::ResourceList {
+            request_id,
+            resources,
+        } => {
             let alias = aliases.add_peer(peer_id.clone());
             println!("[Protocol] Received resources from {}:", alias);
-            
+
             let mut ctrl_resources = Vec::new();
             for res in &resources {
                 let r_alias = aliases.add_resource(res.id.clone());
@@ -324,16 +418,30 @@ fn handle_message(
                             }
                         }
                         // Send End
-                        let _ = peer_clone.send(&peer_id_clone, &Message::ResourceEnd { request_id, id: id_clone });
+                        let _ = peer_clone.send(
+                            &peer_id_clone,
+                            &Message::ResourceEnd {
+                                request_id,
+                                id: id_clone,
+                            },
+                        );
                     }
                 });
             }
         }
-        Message::ResourceChunk { request_id, id, data, .. } => {
+        Message::ResourceChunk {
+            request_id,
+            id,
+            data,
+            ..
+        } => {
             if let Ok(_) = download_mgr.process_chunk(&id, &data) {
-                if let Some((bytes, total, mbps)) = transfer_mgr.update_progress(request_id, data.len() as u64) {
+                if let Some((bytes, total, mbps)) =
+                    transfer_mgr.update_progress(request_id, data.len() as u64)
+                {
                     if let Some(sender) = req_tracker.get(request_id) {
-                        let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
+                        let _ =
+                            sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
                     }
                 }
             }
@@ -342,12 +450,15 @@ fn handle_message(
             if let Ok(()) = download_mgr.complete_download(&id) {
                 if let Some(t) = transfer_mgr.complete(request_id) {
                     let elapsed_secs = t.start_time.elapsed().as_secs_f64();
-                    println!("[Protocol] Download complete for {:?} ({} bytes)", id, t.bytes_transferred);
-                    
+                    println!(
+                        "[Protocol] Download complete for {:?} ({} bytes)",
+                        id, t.bytes_transferred
+                    );
+
                     if let Some(sender) = req_tracker.complete(request_id) {
-                        let _ = sender.send(ControlResponse::DownloadComplete { 
-                            bytes: t.bytes_transferred, 
-                            elapsed_secs 
+                        let _ = sender.send(ControlResponse::DownloadComplete {
+                            bytes: t.bytes_transferred,
+                            elapsed_secs,
                         });
                     }
                 } else {
