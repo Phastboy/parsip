@@ -136,8 +136,8 @@ fn main() -> Result<(), Error> {
         let pid_file = base.join(".parsip").join("parsip.pid");
 
         // Stop logic
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_file)
+            && let Ok(pid) = pid_str.trim().parse::<i32>() {
                 let _ = std::process::Command::new("kill")
                     .arg(pid.to_string())
                     .status();
@@ -146,7 +146,6 @@ fn main() -> Result<(), Error> {
                 // Give it a moment to fully shut down
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
-        }
 
         // Start logic
         let parsip_dir = base.join(".parsip");

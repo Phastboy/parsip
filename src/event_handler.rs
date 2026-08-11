@@ -72,21 +72,22 @@ impl AliasRegistry {
     }
 }
 
-pub fn handle_event(
-    config: &crate::config::Config,
-    peer: &Peer,
-    store: &mut crate::resource::LocalResourceStore,
-    download_mgr: &mut crate::resource::DownloadManager,
-    transfer_mgr: &mut crate::resource::TransferManager,
-    aliases: &mut AliasRegistry,
-    req_tracker: &mut crate::request_tracker::RequestTracker,
-    event: PeerEvent,
-) {
+pub struct DaemonContext<'a> {
+    pub config: &'a crate::config::Config,
+    pub peer: &'a Peer,
+    pub store: &'a mut crate::resource::LocalResourceStore,
+    pub download_mgr: &'a mut crate::resource::DownloadManager,
+    pub transfer_mgr: &'a mut crate::resource::TransferManager,
+    pub aliases: &'a mut AliasRegistry,
+    pub req_tracker: &'a mut crate::request_tracker::RequestTracker,
+}
+
+pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
     match event {
         PeerEvent::Discovered(peer_id, addr, nickname) => {
-            let alias = aliases.add_peer(peer_id.clone());
-            if !aliases.discovered_peers.contains_key(&peer_id) {
-                aliases.discovered_peers.insert(
+            let alias = ctx.aliases.add_peer(peer_id.clone());
+            if !ctx.aliases.discovered_peers.contains_key(&peer_id) {
+                ctx.aliases.discovered_peers.insert(
                     peer_id.clone(),
                     crate::daemon::control::DiscoveredPeerInfo {
                         alias: alias.clone(),
@@ -94,7 +95,7 @@ pub fn handle_event(
                         address: addr,
                     },
                 );
-                if !peer.is_connected(&peer_id) {
+                if !ctx.peer.is_connected(&peer_id) {
                     println!(
                         "[Discovery] Found peer {:?} at {} (alias: {}, nickname: {})",
                         peer_id, addr, alias, nickname
@@ -103,14 +104,14 @@ pub fn handle_event(
             }
         }
         PeerEvent::NewConnection(peer_id) => {
-            let alias = aliases.add_peer(peer_id.clone());
+            let alias = ctx.aliases.add_peer(peer_id.clone());
             println!(
                 "[Event] New connection established with {:?} (alias: {})",
                 peer_id, alias
             );
         }
         PeerEvent::Disconnected(peer_id) => {
-            let alias = aliases
+            let alias = ctx.aliases
                 .peer_aliases
                 .iter()
                 .find(|(_, id)| *id == &peer_id)
@@ -120,47 +121,28 @@ pub fn handle_event(
 
             // Cancel all in-flight transfers for this peer and unblock any waiting CLI
             // commands. Without this, `parsip get` would hang forever after a disconnect.
-            let cancelled = transfer_mgr.cancel_for_peer(&peer_id);
+            let cancelled = ctx.transfer_mgr.cancel_for_peer(&peer_id);
             for t in cancelled {
                 // Remove the partial temp file from the download manager
-                let _ = download_mgr.cancel_download(&t.resource_id);
+                let _ = ctx.download_mgr.cancel_download(&t.resource_id);
                 // Unblock the CLI with an error response
-                if let Some(sender) = req_tracker.complete(t.request_id) {
-                    let _ = sender.send(ControlResponse::Error(
+                if let Some(sender) = ctx.req_tracker.complete(t.request_id) {
+                    let _ = sender.send(crate::daemon::control::ControlResponse::Error(
                         format!("Transfer failed: peer {} disconnected mid-transfer ({} / {} bytes received)",
                             alias, t.bytes_transferred, t.bytes_total)
                     ));
                 }
             }
         }
-        PeerEvent::Message(peer_id, msg) => handle_message(
-            peer,
-            store,
-            download_mgr,
-            transfer_mgr,
-            aliases,
-            req_tracker,
-            peer_id,
-            msg,
-        ),
-        PeerEvent::ControlRequest(cmd, sender) => handle_control(
-            config,
-            peer,
-            store,
-            download_mgr,
-            transfer_mgr,
-            aliases,
-            req_tracker,
-            cmd,
-            sender,
-        ),
+        PeerEvent::Message(peer_id, msg) => handle_message(ctx, peer_id, msg),
+        PeerEvent::ControlRequest(cmd, sender) => handle_control(ctx, cmd, sender),
         PeerEvent::ScanTimeout(req_id) => {
-            if let Some(sender) = req_tracker.complete(req_id) {
+            if let Some(sender) = ctx.req_tracker.complete(req_id) {
                 let mut results = Vec::new();
-                for (_, info) in &aliases.discovered_peers {
+                for info in ctx.aliases.discovered_peers.values() {
                     results.push(info.clone());
                 }
-                let _ = sender.send(ControlResponse::ScanResults(results));
+                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(results));
             }
         }
     }
@@ -172,28 +154,22 @@ use crate::daemon::control::{
 use std::sync::mpsc::Sender;
 
 fn handle_control(
-    config: &crate::config::Config,
-    peer: &Peer,
-    store: &mut crate::resource::LocalResourceStore,
-    download_mgr: &mut crate::resource::DownloadManager,
-    transfer_mgr: &mut crate::resource::TransferManager,
-    aliases: &mut AliasRegistry,
-    req_tracker: &mut crate::request_tracker::RequestTracker,
+    ctx: &mut DaemonContext,
     cmd: ControlMessage,
     sender: Sender<ControlResponse>,
 ) {
     match cmd {
         ControlMessage::Scan => {
-            aliases.discovered_peers.clear();
-            let req_id = req_tracker.next_id();
-            req_tracker.register(req_id, sender);
+            ctx.aliases.discovered_peers.clear();
+            let req_id = ctx.req_tracker.next_id();
+            ctx.req_tracker.register(req_id, sender);
 
             if let Err(e) = crate::discovery::Discovery::broadcast_scan(
-                config.listen_port,
-                &peer.id,
-                &config.nickname,
+                ctx.config.listen_port,
+                &ctx.peer.id,
+                &ctx.config.nickname,
             ) {
-                if let Some(s) = req_tracker.complete(req_id) {
+                if let Some(s) = ctx.req_tracker.complete(req_id) {
                     let _ = s.send(ControlResponse::Error(format!(
                         "Failed to broadcast: {}",
                         e
@@ -202,20 +178,20 @@ fn handle_control(
                 return;
             }
 
-            let event_tx = peer.event_tx.clone();
+            let event_tx = ctx.peer.event_tx.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let _ = event_tx.send(PeerEvent::ScanTimeout(req_id));
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = aliases
+            if let Some(info) = ctx.aliases
                 .discovered_peers
                 .values()
                 .find(|info| info.alias == alias)
             {
                 let addr = info.address;
-                let rx = peer.connect(addr);
+                let rx = ctx.peer.connect(addr);
                 // Block until the connection attempt completes (success or failure).
                 // The background thread handles the TCP handshake.
                 match rx.recv() {
@@ -241,8 +217,8 @@ fn handle_control(
         }
         ControlMessage::ListPeers => {
             let mut connected = Vec::new();
-            for (alias, id) in &aliases.peer_aliases {
-                if peer.is_connected(id) {
+            for (alias, id) in &ctx.aliases.peer_aliases {
+                if ctx.peer.is_connected(id) {
                     connected.push(ConnectedPeerInfo {
                         alias: alias.clone(),
                         peer_id: id.clone(),
@@ -252,10 +228,10 @@ fn handle_control(
             let _ = sender.send(ControlResponse::PeersList(connected));
         }
         ControlMessage::ListResources { peer_alias } => {
-            if let Some(peer_id) = aliases.get_peer(&peer_alias) {
-                let req_id = req_tracker.next_id();
-                req_tracker.register(req_id, sender);
-                let _ = peer.send(&peer_id, &Message::ListResources { request_id: req_id });
+            if let Some(peer_id) = ctx.aliases.get_peer(&peer_alias) {
+                let req_id = ctx.req_tracker.next_id();
+                ctx.req_tracker.register(req_id, sender);
+                let _ = ctx.peer.send(&peer_id, &Message::ListResources { request_id: req_id });
             } else {
                 let _ = sender.send(ControlResponse::Error(format!(
                     "Unknown peer alias: {}",
@@ -267,13 +243,13 @@ fn handle_control(
             peer_alias,
             resource_alias,
         } => {
-            if let Some(peer_id) = aliases.get_peer(&peer_alias) {
-                if let Some(res_id) = aliases.get_resource(&resource_alias) {
-                    if let Some(info) = aliases.get_info(&res_id) {
-                        if let Ok(()) = download_mgr.start_download(&info) {
-                            let request_id = req_tracker.next_id();
-                            req_tracker.register(request_id, sender);
-                            transfer_mgr.register(crate::resource::Transfer {
+            if let Some(peer_id) = ctx.aliases.get_peer(&peer_alias) {
+                if let Some(res_id) = ctx.aliases.get_resource(&resource_alias) {
+                    if let Some(info) = ctx.aliases.get_info(&res_id) {
+                        if let Ok(()) = ctx.download_mgr.start_download(&info) {
+                            let request_id = ctx.req_tracker.next_id();
+                            ctx.req_tracker.register(request_id, sender);
+                            ctx.transfer_mgr.register(crate::resource::Transfer {
                                 request_id,
                                 peer_id: peer_id.clone(),
                                 resource_id: res_id.clone(),
@@ -284,7 +260,7 @@ fn handle_control(
                                 last_report_time: std::time::Instant::now(),
                                 last_report_bytes: 0,
                             });
-                            let _ = peer.send(
+                            let _ = ctx.peer.send(
                                 &peer_id,
                                 &Message::DownloadResource {
                                     request_id,
@@ -323,9 +299,9 @@ fn handle_control(
                 path
             };
             let p = PathBuf::from(expanded_path);
-            match store.add_resource(p) {
+            match ctx.store.add_resource(p) {
                 Ok((id, _info)) => {
-                    let alias = aliases.add_resource(id.clone());
+                    let alias = ctx.aliases.add_resource(id.clone());
                     let _ = sender.send(ControlResponse::ResourceAdded { alias, id });
                 }
                 Err(e) => {
@@ -337,12 +313,7 @@ fn handle_control(
 }
 
 fn handle_message(
-    peer: &Peer,
-    store: &mut crate::resource::LocalResourceStore,
-    download_mgr: &mut crate::resource::DownloadManager,
-    transfer_mgr: &mut crate::resource::TransferManager,
-    aliases: &mut AliasRegistry,
-    req_tracker: &mut crate::request_tracker::RequestTracker,
+    ctx: &mut DaemonContext,
     peer_id: crate::identity::PeerId,
     msg: Message,
 ) {
@@ -352,8 +323,8 @@ fn handle_message(
                 "[Protocol] Peer {:?} requested ListResources (req_id: {})",
                 peer_id, request_id
             );
-            let resources = store.list_resources();
-            let _ = peer.send(
+            let resources = ctx.store.list_resources();
+            let _ = ctx.peer.send(
                 &peer_id,
                 &Message::ResourceList {
                     request_id,
@@ -365,13 +336,13 @@ fn handle_message(
             request_id,
             resources,
         } => {
-            let alias = aliases.add_peer(peer_id.clone());
+            let alias = ctx.aliases.add_peer(peer_id.clone());
             println!("[Protocol] Received resources from {}:", alias);
 
             let mut ctrl_resources = Vec::new();
             for res in &resources {
-                let r_alias = aliases.add_resource(res.id.clone());
-                aliases.cache_info(res.clone());
+                let r_alias = ctx.aliases.add_resource(res.id.clone());
+                ctx.aliases.cache_info(res.clone());
                 ctrl_resources.push(CtrlResourceInfo {
                     alias: r_alias,
                     id: res.id.clone(),
@@ -380,13 +351,13 @@ fn handle_message(
                 });
             }
 
-            if let Some(sender) = req_tracker.complete(request_id) {
+            if let Some(sender) = ctx.req_tracker.complete(request_id) {
                 let _ = sender.send(ControlResponse::ResourceList(ctrl_resources));
             }
         }
         Message::DownloadResource { request_id, id } => {
-            if let Some(file_path) = store.get_path(&id) {
-                let peer_clone = peer.clone();
+            if let Some(file_path) = ctx.store.get_path(&id) {
+                let peer_clone = ctx.peer.clone();
                 let peer_id_clone = peer_id.clone();
                 let id_clone = id.clone();
                 std::thread::spawn(move || {
@@ -435,27 +406,24 @@ fn handle_message(
             data,
             ..
         } => {
-            if let Ok(_) = download_mgr.process_chunk(&id, &data) {
-                if let Some((bytes, total, mbps)) =
-                    transfer_mgr.update_progress(request_id, data.len() as u64)
-                {
-                    if let Some(sender) = req_tracker.get(request_id) {
-                        let _ =
-                            sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
-                    }
-                }
+            if ctx.download_mgr.process_chunk(&id, &data).is_ok()
+                && let Some((bytes, total, mbps)) =
+                    ctx.transfer_mgr.update_progress(request_id, data.len() as u64)
+                && let Some(sender) = ctx.req_tracker.get(request_id)
+            {
+                let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
             }
         }
         Message::ResourceEnd { request_id, id } => {
-            if let Ok(()) = download_mgr.complete_download(&id) {
-                if let Some(t) = transfer_mgr.complete(request_id) {
+            if let Ok(()) = ctx.download_mgr.complete_download(&id) {
+                if let Some(t) = ctx.transfer_mgr.complete(request_id) {
                     let elapsed_secs = t.start_time.elapsed().as_secs_f64();
                     println!(
                         "[Protocol] Download complete for {:?} ({} bytes)",
                         id, t.bytes_transferred
                     );
 
-                    if let Some(sender) = req_tracker.complete(request_id) {
+                    if let Some(sender) = ctx.req_tracker.complete(request_id) {
                         let _ = sender.send(ControlResponse::DownloadComplete {
                             bytes: t.bytes_transferred,
                             elapsed_secs,

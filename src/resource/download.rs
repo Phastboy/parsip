@@ -117,7 +117,7 @@ impl DownloadManager {
                 match handle.join() {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => return Err(e),
-                    Err(_) => return Err(Error::new(ErrorKind::Other, "Writer thread panicked")),
+                    Err(_) => return Err(Error::other("Writer thread panicked")),
                 }
             }
 
