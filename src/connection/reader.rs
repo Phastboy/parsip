@@ -40,7 +40,15 @@ impl ConnectionReader {
                         }
                     }
                     Ok(None) => break,
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => continue,
+                    // WouldBlock: theoretically impossible on a blocking socket but guard it anyway.
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
+                    // TimedOut: no data received within the read timeout window.
+                    // Keepalive has already been probing the peer with no response by this point.
+                    // Treat this as a dead connection — disconnect rather than looping forever.
+                    Err(e) if e.kind() == ErrorKind::TimedOut => {
+                        eprintln!("Connection to {} timed out (no data received), closing", peer_addr);
+                        break;
+                    }
                     Err(e) => {
                         eprintln!("Error reading frame from {}: {}", peer_addr, e);
                         break;
