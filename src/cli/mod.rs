@@ -1,6 +1,5 @@
 use crate::daemon::control::{ControlMessage, ControlResponse};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Write};
-use std::net::TcpStream;
 
 pub fn run(args: &[String]) -> Result<(), Error> {
     if args.len() < 2 {
@@ -109,7 +108,8 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         }
     };
 
-    let mut stream = match TcpStream::connect("127.0.0.1:9091") {
+    let socket_path = crate::config::Config::control_socket_path();
+    let mut stream = match std::os::unix::net::UnixStream::connect(&socket_path) {
         Ok(s) => s,
         Err(_) => {
             eprintln!("Failed to connect to daemon. Is 'parsip daemon' running?");
