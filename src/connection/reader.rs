@@ -44,8 +44,8 @@ impl ConnectionReader {
                     Ok(None) => break,
                     // WouldBlock and TimedOut are treated as fatal connection errors.
                     // Because read_exact is not resumable, hitting a timeout mid-frame
-                    // means the stream is permanently desynchronized. We rely on TCP keepalives
-                    // to detect dead peers before a read timeout would ever fire.
+                    // means the stream is permanently desynchronized. We intentionally break
+                    // the loop to tear down the connection and drop the corrupted peer state.
                     Err(e)
                         if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
                     {
