@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::thread;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -23,7 +23,7 @@ impl Discovery {
         sock.set_reuse_port(true)?;
         sock.bind(&listen_addr.into())?;
         sock.set_broadcast(true)?;
-        let socket = std::net::UdpSocket::from(sock);
+        let socket = UdpSocket::from(sock);
 
         let socket_clone = socket.try_clone()?;
 
@@ -53,7 +53,6 @@ impl Discovery {
 
                                 if remote_peer_id != my_id {
                                     if is_request {
-                                        // Reply with our info
                                         let mut payload = Vec::with_capacity(40 + my_nickname.len());
                                         payload.extend_from_slice(MAGIC_RESPONSE);
                                         payload.extend_from_slice(&tcp_listen_port.to_be_bytes());
@@ -80,19 +79,87 @@ impl Discovery {
     }
 
     pub fn broadcast_scan(tcp_listen_port: u16, my_id: &PeerId, my_nickname: &str) -> Result<(), Error> {
-        let broadcast_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT));
-
-        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        sock.set_broadcast(true)?;
-        let broadcaster = std::net::UdpSocket::from(sock);
-
         let mut payload = Vec::with_capacity(40 + my_nickname.len());
         payload.extend_from_slice(MAGIC_REQUEST);
         payload.extend_from_slice(&tcp_listen_port.to_be_bytes());
         payload.extend_from_slice(&my_id.to_bytes());
         payload.extend_from_slice(my_nickname.as_bytes());
 
-        broadcaster.send_to(&payload, broadcast_addr)?;
+        // Send to both the limited broadcast AND each local subnet's directed broadcast.
+        // Directed broadcast (e.g. 192.168.0.255) works on most home routers
+        // where 255.255.255.255 is blocked. We do both to maximise discovery.
+        let targets = Self::collect_broadcast_addrs();
+
+        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        sock.set_broadcast(true)?;
+        let broadcaster = UdpSocket::from(sock);
+
+        for target in targets {
+            let addr = SocketAddr::V4(SocketAddrV4::new(target, DISCOVERY_PORT));
+            let _ = broadcaster.send_to(&payload, addr);
+        }
+
         Ok(())
+    }
+
+    /// Collect all useful broadcast addresses: the limited broadcast (255.255.255.255)
+    /// plus a directed subnet broadcast for every local IPv4 interface.
+    fn collect_broadcast_addrs() -> Vec<Ipv4Addr> {
+        let mut addrs = vec![Ipv4Addr::BROADCAST]; // 255.255.255.255
+
+        // Try to enumerate local interfaces via /proc/net/if_inet6 alternative:
+        // the simplest portable way is to try binding UDP sockets and reading
+        // the local address. Instead, use a known-good fallback approach:
+        // read /proc/net/fib_trie on Linux for interface prefixes.
+        if let Ok(entries) = std::fs::read_to_string("/proc/net/fib_trie") {
+            let mut current_local: Option<Ipv4Addr> = None;
+            for line in entries.lines() {
+                let trimmed = line.trim();
+                // Lines like: "192.168.0.0/24" or "  |-- 192.168.0.100"
+                if let Some(addr_str) = trimmed.strip_prefix("|-- ").or_else(|| trimmed.strip_prefix("+-- ")) {
+                    if let Ok(ip) = addr_str.trim().parse::<Ipv4Addr>() {
+                        if !ip.is_loopback() && !ip.is_unspecified() {
+                            current_local = Some(ip);
+                        }
+                    }
+                }
+                // LOCAL lines confirm this is a local address
+                if trimmed == "LOCAL" {
+                    if let Some(local) = current_local.take() {
+                        // Derive a /24 broadcast (most home networks use /24)
+                        // A more accurate version would read the prefix length,
+                        // but /24 covers the vast majority of home setups.
+                        let octets = local.octets();
+                        let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+                        if !addrs.contains(&broadcast) {
+                            addrs.push(broadcast);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: also try common home network ranges directly
+        // This is belt-and-suspenders in case /proc parsing fails
+        if addrs.len() == 1 {
+            // Try to determine our local IP by connecting a UDP socket (doesn't send anything)
+            if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+                if sock.connect("8.8.8.8:80").is_ok() {
+                    if let Ok(local) = sock.local_addr() {
+                        if let IpAddr::V4(ip) = local.ip() {
+                            if !ip.is_loopback() {
+                                let octets = ip.octets();
+                                let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+                                if !addrs.contains(&broadcast) {
+                                    addrs.push(broadcast);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        addrs
     }
 }

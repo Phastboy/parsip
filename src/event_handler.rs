@@ -7,7 +7,9 @@ use crate::identity::PeerId;
 
 pub struct AliasRegistry {
     pub peer_aliases: HashMap<String, PeerId>,
+    peer_id_to_alias: HashMap<PeerId, String>,     // O(1) reverse lookup
     resource_aliases: HashMap<String, ResourceId>,
+    resource_id_to_alias: HashMap<ResourceId, String>, // O(1) reverse lookup
     resource_info: HashMap<ResourceId, ResourceInfo>,
     pub discovered_peers: HashMap<PeerId, crate::daemon::control::DiscoveredPeerInfo>,
     next_peer_id: u32,
@@ -18,7 +20,9 @@ impl AliasRegistry {
     pub fn new() -> Self {
         Self {
             peer_aliases: HashMap::new(),
+            peer_id_to_alias: HashMap::new(),
             resource_aliases: HashMap::new(),
+            resource_id_to_alias: HashMap::new(),
             resource_info: HashMap::new(),
             discovered_peers: HashMap::new(),
             next_peer_id: 1,
@@ -27,22 +31,25 @@ impl AliasRegistry {
     }
 
     pub fn add_peer(&mut self, peer_id: PeerId) -> String {
-        // If already aliased, return existing
-        if let Some((alias, _)) = self.peer_aliases.iter().find(|(_, id)| **id == peer_id) {
+        // O(1) reverse lookup instead of O(n) linear scan
+        if let Some(alias) = self.peer_id_to_alias.get(&peer_id) {
             return alias.clone();
         }
         let alias = format!("p{}", self.next_peer_id);
         self.next_peer_id += 1;
+        self.peer_id_to_alias.insert(peer_id.clone(), alias.clone());
         self.peer_aliases.insert(alias.clone(), peer_id);
         alias
     }
 
     pub fn add_resource(&mut self, resource_id: ResourceId) -> String {
-        if let Some((alias, _)) = self.resource_aliases.iter().find(|(_, id)| **id == resource_id) {
+        // O(1) reverse lookup instead of O(n) linear scan
+        if let Some(alias) = self.resource_id_to_alias.get(&resource_id) {
             return alias.clone();
         }
         let alias = format!("r{}", self.next_resource_id);
         self.next_resource_id += 1;
+        self.resource_id_to_alias.insert(resource_id.clone(), alias.clone());
         self.resource_aliases.insert(alias.clone(), resource_id);
         alias
     }
@@ -143,11 +150,16 @@ fn handle_control(
             });
         }
         ControlMessage::Connect { alias } => {
-            // Find peer by alias in discovered_peers
             if let Some(info) = aliases.discovered_peers.values().find(|info| info.alias == alias) {
                 let addr = info.address;
-                let _ = peer.connect(addr);
-                let _ = sender.send(ControlResponse::Ok);
+                let rx = peer.connect(addr);
+                // Block until the connection attempt completes (success or failure).
+                // The background thread handles the TCP handshake.
+                match rx.recv() {
+                    Ok(Ok(_peer_id)) => { let _ = sender.send(ControlResponse::Ok); }
+                    Ok(Err(e)) => { let _ = sender.send(ControlResponse::Error(format!("Connection failed: {}", e))); }
+                    Err(_) => { let _ = sender.send(ControlResponse::Error("Connection thread panicked".to_string())); }
+                }
             } else {
                 let _ = sender.send(ControlResponse::Error(format!("Unknown peer alias: {}", alias)));
             }
@@ -298,8 +310,8 @@ fn handle_message(
                 });
             }
         }
-        Message::ResourceChunk { request_id, id, offset, data } => {
-            if let Ok(_) = download_mgr.process_chunk(&id, offset, &data) {
+        Message::ResourceChunk { request_id, id, data, .. } => {
+            if let Ok(_) = download_mgr.process_chunk(&id, &data) {
                 if let Some((bytes, total, mbps)) = transfer_mgr.update_progress(request_id, data.len() as u64) {
                     if let Some(sender) = req_tracker.get(request_id) {
                         let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });

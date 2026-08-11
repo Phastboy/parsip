@@ -28,8 +28,10 @@ impl Connection {
     pub fn new(stream: TcpStream, remote_addr: SocketAddr) -> Result<(Self, ConnectionReader), Error> {
         let _ = stream.set_nonblocking(false);
         let _ = stream.set_nodelay(true);
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+        // Read timeout: detect dead peers that stop sending (e.g. crash without FIN).
+        // No write timeout: TCP backpressure naturally handles slow receivers.
+        // A write timeout would kill large file transfers on slow networks.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
         
         let read_stream = stream.try_clone()?;
         
