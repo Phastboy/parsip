@@ -28,16 +28,34 @@ fn main() -> Result<(), Error> {
         let mut i = 2;
         while i < args.len() {
             match args[i].as_str() {
+                "start" => {
+                    // recognized command, no-op to allow falling through to daemon logic
+                }
+                "--nickname" => {
+                    if i + 1 < args.len() {
+                        config.nickname = args[i + 1].clone();
+                        i += 1;
+                    } else {
+                        eprintln!("Error: --nickname requires a value");
+                        std::process::exit(1);
+                    }
+                }
                 "--shared" => {
                     if i + 1 < args.len() {
                         config.shared_dir = PathBuf::from(&args[i + 1]);
                         i += 1;
+                    } else {
+                        eprintln!("Error: --shared requires a value");
+                        std::process::exit(1);
                     }
                 }
                 "--downloads" => {
                     if i + 1 < args.len() {
                         config.downloads_dir = PathBuf::from(&args[i + 1]);
                         i += 1;
+                    } else {
+                        eprintln!("Error: --downloads requires a value");
+                        std::process::exit(1);
                     }
                 }
                 arg if i == 2 => {

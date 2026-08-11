@@ -11,4 +11,5 @@ pub enum PeerEvent {
     Discovered(PeerId, SocketAddr, String), // Added nickname
     ControlRequest(ControlMessage, Sender<ControlResponse>),
     ScanTimeout(u32),
+    ConnectResult(u32, Result<PeerId, String>),
 }
