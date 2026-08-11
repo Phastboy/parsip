@@ -143,7 +143,9 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
                 for info in ctx.aliases.discovered_peers.values() {
                     results.push(info.clone());
                 }
-                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(results));
+                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(
+                    results,
+                ));
             }
         }
         PeerEvent::ConnectResult(req_id, result) => {
@@ -194,7 +196,8 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = ctx.aliases
+            if let Some(info) = ctx
+                .aliases
                 .discovered_peers
                 .values()
                 .find(|info| info.alias == alias)

@@ -46,7 +46,9 @@ impl ConnectionReader {
                     // Because read_exact is not resumable, hitting a timeout mid-frame
                     // means the stream is permanently desynchronized. We rely on TCP keepalives
                     // to detect dead peers before a read timeout would ever fire.
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                    Err(e)
+                        if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
+                    {
                         eprintln!(
                             "Connection to {} stalled (timeout/wouldblock), closing to prevent desync",
                             peer_addr
