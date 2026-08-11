@@ -42,13 +42,9 @@ impl Peer {
             ));
         }
 
-        if let Err(e) = self
+        self
             .manager
-            .promote_to_established(conn_id, &self.id, their_id.clone())
-        {
-            // manager already dropped our connection if it threw an error
-            return Err(e);
-        }
+            .promote_to_established(conn_id, &self.id, their_id.clone())?;
 
         // If we reach here, we survived deduplication and the connection is officially registered.
         let manager_for_cleanup = self.manager.clone();

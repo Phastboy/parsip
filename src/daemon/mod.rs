@@ -44,62 +44,57 @@ pub fn run(config: Config) -> Result<(), Error> {
 
     let tx_clone = peer.event_tx.clone();
     thread::spawn(move || {
-        for stream in control_listener.incoming() {
-            if let Ok(mut stream) = stream {
-                let tx = tx_clone.clone();
-                thread::spawn(move || {
-                    let reader = BufReader::new(stream.try_clone().unwrap());
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            if let Ok(cmd) = serde_json::from_str::<control::ControlMessage>(&line)
-                            {
-                                let (res_tx, res_rx) = std::sync::mpsc::channel();
-                                let _ =
-                                    tx.send(crate::peer::PeerEvent::ControlRequest(cmd, res_tx));
-                                while let Ok(resp) = res_rx.recv() {
-                                    let is_terminal = matches!(
-                                        resp,
-                                        control::ControlResponse::Ok
-                                            | control::ControlResponse::Error(_)
-                                            | control::ControlResponse::ScanResults(_)
-                                            | control::ControlResponse::PeersList(_)
-                                            | control::ControlResponse::ResourceList(_)
-                                            | control::ControlResponse::ResourceAdded { .. }
-                                            | control::ControlResponse::DownloadComplete { .. }
-                                    );
-                                    if let Ok(resp_json) = serde_json::to_string(&resp) {
-                                        if stream
-                                            .write_all(format!("{}\n", resp_json).as_bytes())
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    if is_terminal {
-                                        break;
-                                    }
+        for mut stream in control_listener.incoming().flatten() {
+            let tx = tx_clone.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Ok(cmd) = serde_json::from_str::<control::ControlMessage>(&line)
+                    {
+                        let (res_tx, res_rx) = std::sync::mpsc::channel();
+                        let _ =
+                            tx.send(crate::peer::PeerEvent::ControlRequest(cmd, res_tx));
+                        while let Ok(resp) = res_rx.recv() {
+                            let is_terminal = matches!(
+                                resp,
+                                control::ControlResponse::Ok
+                                    | control::ControlResponse::Error(_)
+                                    | control::ControlResponse::ScanResults(_)
+                                    | control::ControlResponse::PeersList(_)
+                                    | control::ControlResponse::ResourceList(_)
+                                    | control::ControlResponse::ResourceAdded { .. }
+                                    | control::ControlResponse::DownloadComplete { .. }
+                            );
+                            if let Ok(resp_json) = serde_json::to_string(&resp)
+                                && stream
+                                    .write_all(format!("{}\n", resp_json).as_bytes())
+                                    .is_err()
+                                {
+                                    break;
                                 }
-                            } else {
-                                let _ = stream.write_all(b"{\"Error\":\"Invalid JSON\"}\n");
+                            if is_terminal {
+                                break;
                             }
                         }
+                    } else {
+                        let _ = stream.write_all(b"{\"Error\":\"Invalid JSON\"}\n");
                     }
-                });
-            }
+                }
+            });
         }
     });
 
     for event in event_rx.iter() {
-        handle_event(
-            &config,
-            &peer,
-            &mut resource_store,
-            &mut download_mgr,
-            &mut transfer_mgr,
-            &mut aliases,
-            &mut request_tracker,
-            event,
-        );
+        let mut ctx = crate::event_handler::DaemonContext {
+            config: &config,
+            peer: &peer,
+            store: &mut resource_store,
+            download_mgr: &mut download_mgr,
+            transfer_mgr: &mut transfer_mgr,
+            aliases: &mut aliases,
+            req_tracker: &mut request_tracker,
+        };
+        handle_event(&mut ctx, event);
     }
 
     Ok(())

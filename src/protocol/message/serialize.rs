@@ -1,11 +1,11 @@
 use crate::protocol::frame::Frame;
 use crate::protocol::message::types::Message;
 
-impl Into<Frame> for &Message {
-    fn into(self) -> Frame {
-        let msg_type = self.message_type();
+impl From<&Message> for Frame {
+    fn from(val: &Message) -> Self {
+        let msg_type = val.message_type();
 
-        let payload = match self {
+        let payload = match val {
             Message::Hello { public_key, nonce } => {
                 let mut p = Vec::with_capacity(64);
                 p.extend_from_slice(public_key);

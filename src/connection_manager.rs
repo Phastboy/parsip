@@ -52,7 +52,7 @@ impl ConnectionManager {
         let mut entries = self
             .entries
             .lock()
-            .map_err(|_| Error::new(ErrorKind::Other, "entries lock poisoned"))?;
+            .map_err(|_| Error::other("entries lock poisoned"))?;
 
         entries.insert(conn_id, entry);
         Ok(conn_id)
@@ -63,18 +63,15 @@ impl ConnectionManager {
     }
 
     pub fn remove(&self, conn_id: u64) {
-        if let Ok(mut entries) = self.entries.lock() {
-            if let Some(mut entry) = entries.remove(&conn_id) {
+        if let Ok(mut entries) = self.entries.lock()
+            && let Some(mut entry) = entries.remove(&conn_id) {
                 entry.state = ConnectionState::Closing;
-                if let Some(peer_id) = entry.peer_id {
-                    if let Ok(mut index) = self.peer_index.lock() {
-                        if matches!(index.get(&peer_id), Some(&id) if id == conn_id) {
+                if let Some(peer_id) = entry.peer_id
+                    && let Ok(mut index) = self.peer_index.lock()
+                        && matches!(index.get(&peer_id), Some(&id) if id == conn_id) {
                             index.remove(&peer_id);
                         }
-                    }
-                }
             }
-        }
     }
 
     pub fn promote_to_established(
@@ -86,11 +83,11 @@ impl ConnectionManager {
         let mut entries = self
             .entries
             .lock()
-            .map_err(|_| Error::new(ErrorKind::Other, "entries lock poisoned"))?;
+            .map_err(|_| Error::other("entries lock poisoned"))?;
         let mut index = self
             .peer_index
             .lock()
-            .map_err(|_| Error::new(ErrorKind::Other, "peer_index lock poisoned"))?;
+            .map_err(|_| Error::other("peer_index lock poisoned"))?;
 
         let (is_local_initiator, entry_direction) = {
             let entry = entries
@@ -119,11 +116,10 @@ impl ConnectionManager {
                         "Deduplication: keeping NEW {:?} connection to {:?}",
                         entry_direction, their_id
                     );
-                    if let Some(removed_old) = entries.remove(&old_conn_id) {
-                        if let Ok(conn) = removed_old.connection.lock() {
+                    if let Some(removed_old) = entries.remove(&old_conn_id)
+                        && let Ok(conn) = removed_old.connection.lock() {
                             let _ = conn.stream.shutdown(std::net::Shutdown::Both);
                         }
-                    }
                     // Insert new into index
                     index.insert(their_id.clone(), conn_id);
 
@@ -167,14 +163,14 @@ impl ConnectionManager {
             let index = self
                 .peer_index
                 .lock()
-                .map_err(|_| Error::new(ErrorKind::Other, "peer_index lock poisoned"))?;
+                .map_err(|_| Error::other("peer_index lock poisoned"))?;
             let conn_id = index.get(peer_id).copied();
 
             if let Some(id) = conn_id {
                 let mut entries = self
                     .entries
                     .lock()
-                    .map_err(|_| Error::new(ErrorKind::Other, "entries lock poisoned"))?;
+                    .map_err(|_| Error::other("entries lock poisoned"))?;
                 if let Some(entry) = entries.get_mut(&id) {
                     Some(entry.connection.clone())
                 } else {
@@ -188,7 +184,7 @@ impl ConnectionManager {
         if let Some(conn_arc) = conn_arc {
             let mut conn = conn_arc
                 .lock()
-                .map_err(|_| Error::new(ErrorKind::Other, "connection lock poisoned"))?;
+                .map_err(|_| Error::other("connection lock poisoned"))?;
             let frame: crate::protocol::Frame = message.into();
             return conn.send(&frame);
         }
