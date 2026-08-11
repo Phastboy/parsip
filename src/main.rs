@@ -25,9 +25,13 @@ fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 && args[1] == "daemon" {
-        let cmd = if args.len() > 2 { args[2].as_str() } else { "start" };
+        let cmd = if args.len() > 2 {
+            args[2].as_str()
+        } else {
+            "start"
+        };
         let mut i = 3;
-        
+
         while i < args.len() {
             match args[i].as_str() {
                 "--nickname" => {

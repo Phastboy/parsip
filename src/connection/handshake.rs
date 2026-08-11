@@ -1,7 +1,6 @@
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::io::{Error, ErrorKind};
 
-
 use crate::identity::{Identity, PeerId};
 use crate::protocol::{Decoder, Encoder, LengthPrefixCodec, Message};
 use crate::random::random_bytes_32;

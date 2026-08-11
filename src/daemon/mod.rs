@@ -33,10 +33,7 @@ pub fn run(config: Config) -> Result<(), Error> {
 
     if socket_path.exists() {
         if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
-            let msg = format!(
-                "Daemon is already running on {:?}",
-                socket_path
-            );
+            let msg = format!("Daemon is already running on {:?}", socket_path);
             error!("{}", msg);
             return Err(Error::new(std::io::ErrorKind::AddrInUse, msg));
         } else {
@@ -53,15 +50,9 @@ pub fn run(config: Config) -> Result<(), Error> {
 
     let control_listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(
-        &socket_path,
-        std::fs::Permissions::from_mode(0o600),
-    );
+    let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600));
 
-    info!(
-        "Control API listening on Unix socket {:?}",
-        socket_path
-    );
+    info!("Control API listening on Unix socket {:?}", socket_path);
 
     if let Err(e) = crate::discovery::Discovery::start(
         config.listen_port,
