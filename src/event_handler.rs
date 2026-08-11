@@ -111,7 +111,8 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
             );
         }
         PeerEvent::Disconnected(peer_id) => {
-            let alias = ctx.aliases
+            let alias = ctx
+                .aliases
                 .peer_aliases
                 .iter()
                 .find(|(_, id)| *id == &peer_id)
@@ -142,7 +143,9 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
                 for info in ctx.aliases.discovered_peers.values() {
                     results.push(info.clone());
                 }
-                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(results));
+                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(
+                    results,
+                ));
             }
         }
     }
@@ -153,11 +156,7 @@ use crate::daemon::control::{
 };
 use std::sync::mpsc::Sender;
 
-fn handle_control(
-    ctx: &mut DaemonContext,
-    cmd: ControlMessage,
-    sender: Sender<ControlResponse>,
-) {
+fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<ControlResponse>) {
     match cmd {
         ControlMessage::Scan => {
             ctx.aliases.discovered_peers.clear();
@@ -185,7 +184,8 @@ fn handle_control(
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = ctx.aliases
+            if let Some(info) = ctx
+                .aliases
                 .discovered_peers
                 .values()
                 .find(|info| info.alias == alias)
@@ -231,7 +231,9 @@ fn handle_control(
             if let Some(peer_id) = ctx.aliases.get_peer(&peer_alias) {
                 let req_id = ctx.req_tracker.next_id();
                 ctx.req_tracker.register(req_id, sender);
-                let _ = ctx.peer.send(&peer_id, &Message::ListResources { request_id: req_id });
+                let _ = ctx
+                    .peer
+                    .send(&peer_id, &Message::ListResources { request_id: req_id });
             } else {
                 let _ = sender.send(ControlResponse::Error(format!(
                     "Unknown peer alias: {}",
@@ -312,11 +314,7 @@ fn handle_control(
     }
 }
 
-fn handle_message(
-    ctx: &mut DaemonContext,
-    peer_id: crate::identity::PeerId,
-    msg: Message,
-) {
+fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg: Message) {
     match msg {
         Message::ListResources { request_id } => {
             println!(
@@ -407,8 +405,9 @@ fn handle_message(
             ..
         } => {
             if ctx.download_mgr.process_chunk(&id, &data).is_ok()
-                && let Some((bytes, total, mbps)) =
-                    ctx.transfer_mgr.update_progress(request_id, data.len() as u64)
+                && let Some((bytes, total, mbps)) = ctx
+                    .transfer_mgr
+                    .update_progress(request_id, data.len() as u64)
                 && let Some(sender) = ctx.req_tracker.get(request_id)
             {
                 let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });

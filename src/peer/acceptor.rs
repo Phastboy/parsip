@@ -42,8 +42,7 @@ impl Peer {
             ));
         }
 
-        self
-            .manager
+        self.manager
             .promote_to_established(conn_id, &self.id, their_id.clone())?;
 
         // If we reach here, we survived deduplication and the connection is officially registered.

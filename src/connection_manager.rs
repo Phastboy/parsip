@@ -64,14 +64,16 @@ impl ConnectionManager {
 
     pub fn remove(&self, conn_id: u64) {
         if let Ok(mut entries) = self.entries.lock()
-            && let Some(mut entry) = entries.remove(&conn_id) {
-                entry.state = ConnectionState::Closing;
-                if let Some(peer_id) = entry.peer_id
-                    && let Ok(mut index) = self.peer_index.lock()
-                        && matches!(index.get(&peer_id), Some(&id) if id == conn_id) {
-                            index.remove(&peer_id);
-                        }
+            && let Some(mut entry) = entries.remove(&conn_id)
+        {
+            entry.state = ConnectionState::Closing;
+            if let Some(peer_id) = entry.peer_id
+                && let Ok(mut index) = self.peer_index.lock()
+                && matches!(index.get(&peer_id), Some(&id) if id == conn_id)
+            {
+                index.remove(&peer_id);
             }
+        }
     }
 
     pub fn promote_to_established(
@@ -117,9 +119,10 @@ impl ConnectionManager {
                         entry_direction, their_id
                     );
                     if let Some(removed_old) = entries.remove(&old_conn_id)
-                        && let Ok(conn) = removed_old.connection.lock() {
-                            let _ = conn.stream.shutdown(std::net::Shutdown::Both);
-                        }
+                        && let Ok(conn) = removed_old.connection.lock()
+                    {
+                        let _ = conn.stream.shutdown(std::net::Shutdown::Both);
+                    }
                     // Insert new into index
                     index.insert(their_id.clone(), conn_id);
 

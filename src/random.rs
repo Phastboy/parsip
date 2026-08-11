@@ -9,9 +9,10 @@ use std::io::Read;
 pub fn random_bytes_32() -> [u8; 32] {
     let mut bytes = [0u8; 32];
     if let Ok(mut f) = fs::File::open("/dev/urandom")
-        && f.read_exact(&mut bytes).is_ok() {
-            return bytes;
-        }
+        && f.read_exact(&mut bytes).is_ok()
+    {
+        return bytes;
+    }
     // Fallback: extremely unlikely to be hit on any Unix system, but avoid
     // ever returning all-zero randomness.
     let time = std::time::SystemTime::now()
