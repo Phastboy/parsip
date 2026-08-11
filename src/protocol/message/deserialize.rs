@@ -67,6 +67,10 @@ fn parse_resource_list(p: &[u8]) -> Result<Message, Error> {
     let count = u32::from_be_bytes(p[off..off + 4].try_into().unwrap());
     off += 4;
 
+    if count as usize > (p.len() - off) / 44 {
+        return Err(err("Bad List"));
+    }
+
     let mut resources = Vec::with_capacity(count as usize);
     for _ in 0..count {
         if off + 32 > p.len() {

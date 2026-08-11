@@ -101,8 +101,25 @@ fn main() -> Result<(), Error> {
         let log_file = parsip_dir.join("daemon_out.log");
         let err_file = parsip_dir.join("daemon_err.log");
 
-        let stdout = File::create(log_file).unwrap();
-        let stderr = File::create(err_file).unwrap();
+        if let Err(e) = fs::create_dir_all(&parsip_dir) {
+            eprintln!("Error creating {}: {}", parsip_dir.display(), e);
+            std::process::exit(1);
+        }
+
+        let stdout = match File::create(&log_file) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating {}: {}", log_file.display(), e);
+                std::process::exit(1);
+            }
+        };
+        let stderr = match File::create(&err_file) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating {}: {}", err_file.display(), e);
+                std::process::exit(1);
+            }
+        };
 
         let daemonize = daemonize::Daemonize::new()
             .pid_file(&pid_file)
@@ -171,8 +188,25 @@ fn main() -> Result<(), Error> {
         let log_file = parsip_dir.join("daemon_out.log");
         let err_file = parsip_dir.join("daemon_err.log");
 
-        let stdout = File::create(log_file).unwrap();
-        let stderr = File::create(err_file).unwrap();
+        if let Err(e) = fs::create_dir_all(&parsip_dir) {
+            eprintln!("Error creating {}: {}", parsip_dir.display(), e);
+            std::process::exit(1);
+        }
+
+        let stdout = match File::create(&log_file) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating {}: {}", log_file.display(), e);
+                std::process::exit(1);
+            }
+        };
+        let stderr = match File::create(&err_file) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating {}: {}", err_file.display(), e);
+                std::process::exit(1);
+            }
+        };
 
         let daemonize = daemonize::Daemonize::new()
             .pid_file(&pid_file)
