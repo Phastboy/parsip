@@ -52,10 +52,10 @@ impl Connection {
             let _ = sock_ref.set_tcp_keepalive(&keepalive);
         }
 
-        // Read timeout as a last-resort safety net in case keepalive doesn't fire
-        // (e.g. the OS ignores our keepalive settings). 60s is long enough not to
-        // interfere with slow peers but short enough to unblock a stuck transfer.
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+        // We explicitly DO NOT set a read timeout (SO_RCVTIMEO) on this socket.
+        // If a timeout fires mid-frame during read_exact, the bytes are discarded
+        // and the stream permanently desynchronizes. We rely entirely on the TCP
+        // Keepalive configured above to detect dead peers.
 
         let read_stream = stream.try_clone()?;
 

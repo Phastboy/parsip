@@ -127,7 +127,7 @@ This means all threads can send frames to any peer instantly (non-blocking chann
 ### 🔴 Must-have for reliability
 
 - [ ] **SHA256 verification after download** — currently you trust the bytes are correct; never verified
-- [ ] **Resume interrupted downloads** — if a 1 GB transfer cuts at 900 MB, start from where it left off
+- [ ] **Resume interrupted downloads** — if a 1 GB transfer cuts at 900 MB, start from where it left off *(Note: Scheduled for a future branch, read_exact timeout issue bypassed by relying on TCP keepalives instead of stateful codec)*
 - [ ] **Per-connection writer thread** — eliminate send-side mutex contention (see above)
 - [ ] **Unix socket for control API** — replace `127.0.0.1:9091` with `~/.parsip/daemon.sock` (faster, no port conflict, no security surface)
 

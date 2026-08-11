@@ -41,14 +41,13 @@ impl ConnectionReader {
                         }
                     },
                     Ok(None) => break,
-                    // WouldBlock: theoretically impossible on a blocking socket but guard it anyway.
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
-                    // TimedOut: no data received within the read timeout window.
-                    // Keepalive has already been probing the peer with no response by this point.
-                    // Treat this as a dead connection — disconnect rather than looping forever.
-                    Err(e) if e.kind() == ErrorKind::TimedOut => {
+                    // WouldBlock and TimedOut are treated as fatal connection errors.
+                    // Because read_exact is not resumable, hitting a timeout mid-frame
+                    // means the stream is permanently desynchronized. We rely on TCP keepalives
+                    // to detect dead peers before a read timeout would ever fire.
+                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
                         eprintln!(
-                            "Connection to {} timed out (no data received), closing",
+                            "Connection to {} stalled (timeout/wouldblock), closing to prevent desync",
                             peer_addr
                         );
                         break;
