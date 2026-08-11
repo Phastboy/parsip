@@ -134,21 +134,24 @@ impl Discovery {
                     .strip_prefix("|-- ")
                     .or_else(|| trimmed.strip_prefix("+-- "))
                     && let Ok(ip) = addr_str.trim().parse::<Ipv4Addr>()
-                        && !ip.is_loopback() && !ip.is_unspecified() {
-                            current_local = Some(ip);
-                        }
+                    && !ip.is_loopback()
+                    && !ip.is_unspecified()
+                {
+                    current_local = Some(ip);
+                }
                 // LOCAL lines confirm this is a local address
                 if trimmed == "LOCAL"
-                    && let Some(local) = current_local.take() {
-                        // Derive a /24 broadcast (most home networks use /24)
-                        // A more accurate version would read the prefix length,
-                        // but /24 covers the vast majority of home setups.
-                        let octets = local.octets();
-                        let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-                        if !addrs.contains(&broadcast) {
-                            addrs.push(broadcast);
-                        }
+                    && let Some(local) = current_local.take()
+                {
+                    // Derive a /24 broadcast (most home networks use /24)
+                    // A more accurate version would read the prefix length,
+                    // but /24 covers the vast majority of home setups.
+                    let octets = local.octets();
+                    let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+                    if !addrs.contains(&broadcast) {
+                        addrs.push(broadcast);
                     }
+                }
             }
         }
 
@@ -158,15 +161,16 @@ impl Discovery {
             // Try to determine our local IP by connecting a UDP socket (doesn't send anything)
             if let Ok(sock) = UdpSocket::bind("0.0.0.0:0")
                 && sock.connect("8.8.8.8:80").is_ok()
-                    && let Ok(local) = sock.local_addr()
-                        && let IpAddr::V4(ip) = local.ip()
-                            && !ip.is_loopback() {
-                                let octets = ip.octets();
-                                let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-                                if !addrs.contains(&broadcast) {
-                                    addrs.push(broadcast);
-                                }
-                            }
+                && let Ok(local) = sock.local_addr()
+                && let IpAddr::V4(ip) = local.ip()
+                && !ip.is_loopback()
+            {
+                let octets = ip.octets();
+                let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+                if !addrs.contains(&broadcast) {
+                    addrs.push(broadcast);
+                }
+            }
         }
 
         addrs

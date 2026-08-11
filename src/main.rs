@@ -137,15 +137,16 @@ fn main() -> Result<(), Error> {
 
         // Stop logic
         if let Ok(pid_str) = std::fs::read_to_string(&pid_file)
-            && let Ok(pid) = pid_str.trim().parse::<i32>() {
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .status();
-                println!("Stopped parsip daemon (PID: {})", pid);
-                let _ = std::fs::remove_file(&pid_file);
-                // Give it a moment to fully shut down
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
+            && let Ok(pid) = pid_str.trim().parse::<i32>()
+        {
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .status();
+            println!("Stopped parsip daemon (PID: {})", pid);
+            let _ = std::fs::remove_file(&pid_file);
+            // Give it a moment to fully shut down
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
 
         // Start logic
         let parsip_dir = base.join(".parsip");

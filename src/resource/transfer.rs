@@ -112,7 +112,7 @@ mod tests {
         let p1 = PeerId([1; 32]);
         let p2 = PeerId([2; 32]);
 
-        let mut t1 = Transfer {
+        let t1 = Transfer {
             request_id: 1,
             peer_id: p1.clone(),
             resource_id: ResourceId([1; 32]),

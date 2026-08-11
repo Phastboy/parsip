@@ -18,10 +18,11 @@ impl LocalResourceStore {
         if let Ok(entries) = fs::read_dir(&shared_dir) {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata()
-                    && metadata.is_file() {
-                        let path = entry.path();
-                        let _ = Self::hash_file(&path, &mut index);
-                    }
+                    && metadata.is_file()
+                {
+                    let path = entry.path();
+                    let _ = Self::hash_file(&path, &mut index);
+                }
             }
         }
 

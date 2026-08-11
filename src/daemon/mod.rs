@@ -49,11 +49,9 @@ pub fn run(config: Config) -> Result<(), Error> {
             thread::spawn(move || {
                 let reader = BufReader::new(stream.try_clone().unwrap());
                 for line in reader.lines().map_while(Result::ok) {
-                    if let Ok(cmd) = serde_json::from_str::<control::ControlMessage>(&line)
-                    {
+                    if let Ok(cmd) = serde_json::from_str::<control::ControlMessage>(&line) {
                         let (res_tx, res_rx) = std::sync::mpsc::channel();
-                        let _ =
-                            tx.send(crate::peer::PeerEvent::ControlRequest(cmd, res_tx));
+                        let _ = tx.send(crate::peer::PeerEvent::ControlRequest(cmd, res_tx));
                         while let Ok(resp) = res_rx.recv() {
                             let is_terminal = matches!(
                                 resp,
@@ -69,9 +67,9 @@ pub fn run(config: Config) -> Result<(), Error> {
                                 && stream
                                     .write_all(format!("{}\n", resp_json).as_bytes())
                                     .is_err()
-                                {
-                                    break;
-                                }
+                            {
+                                break;
+                            }
                             if is_terminal {
                                 break;
                             }
