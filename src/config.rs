@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub listen_port: u16,
     pub shared_dir: PathBuf,
@@ -36,10 +37,12 @@ impl Config {
         let config_path = base.join(".parsip").join("config.toml");
 
         if let Ok(content) = fs::read_to_string(&config_path) {
-            if let Ok(config) = toml::from_str(&content) {
-                return config;
-            } else {
-                eprintln!("Warning: Failed to parse config.toml, using defaults.");
+            match toml::from_str(&content) {
+                Ok(config) => return config,
+                Err(e) => {
+                    eprintln!("Warning: Failed to parse config.toml: {}", e);
+                    eprintln!("Using default configuration.");
+                }
             }
         }
 
@@ -58,5 +61,12 @@ impl Config {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
         fs::write(config_path, content)
+    }
+
+    pub fn control_socket_path() -> PathBuf {
+        let base = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        base.join(".parsip").join("daemon.sock")
     }
 }

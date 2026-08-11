@@ -1,7 +1,7 @@
 pub mod control;
 
 use std::io::{BufRead, BufReader, Error, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::thread;
 
 use crate::config::Config;
@@ -29,9 +29,39 @@ pub fn run(config: Config) -> Result<(), Error> {
     let mut aliases = AliasRegistry::new();
     let mut transfer_mgr = crate::resource::TransferManager::new();
 
-    // Start Control TCP Server (127.0.0.1:9091)
-    let control_listener = TcpListener::bind("127.0.0.1:9091")?;
-    info!("Control API listening on 127.0.0.1:9091");
+    let socket_path = Config::control_socket_path();
+
+    if socket_path.exists() {
+        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+            let msg = format!(
+                "Daemon is already running on {:?}",
+                socket_path
+            );
+            error!("{}", msg);
+            return Err(Error::new(std::io::ErrorKind::AddrInUse, msg));
+        } else {
+            if let Err(e) = std::fs::remove_file(&socket_path) {
+                error!("Failed to remove stale control socket: {}", e);
+                return Err(e);
+            }
+        }
+    }
+
+    if let Some(parent) = socket_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let control_listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(
+        &socket_path,
+        std::fs::Permissions::from_mode(0o600),
+    );
+
+    info!(
+        "Control API listening on Unix socket {:?}",
+        socket_path
+    );
 
     if let Err(e) = crate::discovery::Discovery::start(
         config.listen_port,
