@@ -52,10 +52,12 @@ impl Connection {
             let _ = sock_ref.set_tcp_keepalive(&keepalive);
         }
 
-        // We explicitly DO NOT set a read timeout (SO_RCVTIMEO) on this socket.
-        // If a timeout fires mid-frame during read_exact, the bytes are discarded
-        // and the stream permanently desynchronizes. We rely entirely on the TCP
-        // Keepalive configured above to detect dead peers.
+        // Bounded frame-progress timeout. If an authenticated peer starts sending a frame
+        // but stalls (e.g. hung process, slow loris), read_exact will block forever because
+        // TCP keepalive only checks if the OS is reachable, not if the application is sending.
+        // We set a 60s read timeout here. If this fires, the reader thread treats it as fatal
+        // and drops the connection, preventing blocked threads.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
 
         let read_stream = stream.try_clone()?;
 
