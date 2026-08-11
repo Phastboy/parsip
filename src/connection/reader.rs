@@ -38,6 +38,7 @@ impl ConnectionReader {
                         },
                         Err(e) => {
                             eprintln!("Failed to parse message from {}: {}", peer_addr, e);
+                            break;
                         }
                     },
                     Ok(None) => break,
