@@ -143,9 +143,19 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
                 for info in ctx.aliases.discovered_peers.values() {
                     results.push(info.clone());
                 }
-                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(
-                    results,
-                ));
+                let _ = sender.send(crate::daemon::control::ControlResponse::ScanResults(results));
+            }
+        }
+        PeerEvent::ConnectResult(req_id, result) => {
+            if let Some(sender) = ctx.req_tracker.complete(req_id) {
+                match result {
+                    Ok(_) => {
+                        let _ = sender.send(crate::daemon::control::ControlResponse::Ok);
+                    }
+                    Err(e) => {
+                        let _ = sender.send(crate::daemon::control::ControlResponse::Error(e));
+                    }
+                }
             }
         }
     }
@@ -184,30 +194,25 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = ctx
-                .aliases
+            if let Some(info) = ctx.aliases
                 .discovered_peers
                 .values()
                 .find(|info| info.alias == alias)
             {
                 let addr = info.address;
                 let rx = ctx.peer.connect(addr);
-                // Block until the connection attempt completes (success or failure).
-                // The background thread handles the TCP handshake.
-                match rx.recv() {
-                    Ok(Ok(_peer_id)) => {
-                        let _ = sender.send(ControlResponse::Ok);
-                    }
-                    Ok(Err(e)) => {
-                        let _ = sender
-                            .send(ControlResponse::Error(format!("Connection failed: {}", e)));
-                    }
-                    Err(_) => {
-                        let _ = sender.send(ControlResponse::Error(
-                            "Connection thread panicked".to_string(),
-                        ));
-                    }
-                }
+                let req_id = ctx.req_tracker.next_id();
+                ctx.req_tracker.register(req_id, sender);
+                let event_tx = ctx.peer.event_tx.clone();
+
+                std::thread::spawn(move || {
+                    let result = match rx.recv() {
+                        Ok(Ok(peer_id)) => Ok(peer_id),
+                        Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
+                        Err(_) => Err("Connection thread panicked".to_string()),
+                    };
+                    let _ = event_tx.send(PeerEvent::ConnectResult(req_id, result));
+                });
             } else {
                 let _ = sender.send(ControlResponse::Error(format!(
                     "Unknown peer alias: {}",
