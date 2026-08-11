@@ -48,6 +48,14 @@ impl Peer {
     }
 
     pub fn listen(&self) -> Result<TcpListener, Error> {
-        TcpListener::bind(self.address)
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )?;
+        socket.set_reuse_address(true)?;
+        socket.bind(&self.address.into())?;
+        socket.listen(128)?;
+        Ok(socket.into())
     }
 }
