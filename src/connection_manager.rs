@@ -8,15 +8,12 @@ use crate::identity::PeerId;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ConnectionState {
-    Handshaking,
     Established,
     Closing,
 }
 
 pub struct ConnectionEntry {
-    pub peer_id: Option<PeerId>,
-    pub direction: Direction,
-    pub connection: Arc<Mutex<Connection>>,
+    pub connection: Connection,
     pub state: ConnectionState,
 }
 
@@ -36,52 +33,17 @@ impl ConnectionManager {
         }
     }
 
-    pub fn insert_pending(
-        &self,
-        connection: Arc<Mutex<Connection>>,
-        direction: Direction,
-    ) -> Result<u64, Error> {
+    pub fn insert_connection(&self, connection: Connection, my_id: &PeerId) -> Result<u64, Error> {
         let conn_id = self.reserve_id();
+        let their_id = connection.remote_peer_id.clone();
+        let entry_direction = connection.direction;
+        let is_local_initiator = entry_direction == Direction::Outgoing;
+
         let entry = ConnectionEntry {
-            peer_id: None,
-            direction,
             connection,
-            state: ConnectionState::Handshaking,
+            state: ConnectionState::Established,
         };
 
-        let mut entries = self
-            .entries
-            .lock()
-            .map_err(|_| Error::other("entries lock poisoned"))?;
-
-        entries.insert(conn_id, entry);
-        Ok(conn_id)
-    }
-
-    pub fn reserve_id(&self) -> u64 {
-        self.next_conn_id.fetch_add(1, Ordering::SeqCst)
-    }
-
-    pub fn remove(&self, conn_id: u64) {
-        if let Ok(mut entries) = self.entries.lock()
-            && let Some(mut entry) = entries.remove(&conn_id)
-        {
-            entry.state = ConnectionState::Closing;
-            if let Some(peer_id) = entry.peer_id
-                && let Ok(mut index) = self.peer_index.lock()
-                && matches!(index.get(&peer_id), Some(&id) if id == conn_id)
-            {
-                index.remove(&peer_id);
-            }
-        }
-    }
-
-    pub fn promote_to_established(
-        &self,
-        conn_id: u64,
-        my_id: &PeerId,
-        their_id: PeerId,
-    ) -> Result<(), Error> {
         let mut entries = self
             .entries
             .lock()
@@ -91,18 +53,7 @@ impl ConnectionManager {
             .lock()
             .map_err(|_| Error::other("peer_index lock poisoned"))?;
 
-        let (is_local_initiator, entry_direction) = {
-            let entry = entries
-                .get(&conn_id)
-                .ok_or_else(|| Error::new(ErrorKind::NotFound, "Pending connection not found"))?;
-            (entry.direction == Direction::Outgoing, entry.direction)
-        };
-
         if let Some(&old_conn_id) = index.get(&their_id) {
-            if old_conn_id == conn_id {
-                return Ok(());
-            }
-
             let old_entry_exists = entries.contains_key(&old_conn_id);
             if old_entry_exists {
                 let local_wins_tie = my_id.to_bytes() > their_id.to_bytes();
@@ -118,46 +69,50 @@ impl ConnectionManager {
                         "Deduplication: keeping NEW {:?} connection to {:?}",
                         entry_direction, their_id
                     );
-                    if let Some(removed_old) = entries.remove(&old_conn_id)
-                        && let Ok(conn) = removed_old.connection.lock()
-                    {
-                        let _ = conn.stream.shutdown(std::net::Shutdown::Both);
+                    if entries.remove(&old_conn_id).is_some() {
+                        // The old connection's writer thread will exit eventually
                     }
                     // Insert new into index
                     index.insert(their_id.clone(), conn_id);
-
-                    if let Some(entry) = entries.get_mut(&conn_id) {
-                        entry.peer_id = Some(their_id);
-                        entry.state = ConnectionState::Established;
-                    }
-                    Ok(())
+                    entries.insert(conn_id, entry);
+                    Ok(conn_id)
                 } else {
                     println!(
                         "Deduplication: dropping NEW {:?} connection to {:?}",
                         entry_direction, their_id
                     );
-                    entries.remove(&conn_id); // Drop ourselves
                     Err(Error::new(
                         ErrorKind::AlreadyExists,
                         "Deduplication tie-breaker dropped connection",
                     ))
                 }
             } else {
-                // Stale index? Overwrite it.
                 index.insert(their_id.clone(), conn_id);
-                if let Some(entry) = entries.get_mut(&conn_id) {
-                    entry.peer_id = Some(their_id);
-                    entry.state = ConnectionState::Established;
-                }
-                Ok(())
+                entries.insert(conn_id, entry);
+                Ok(conn_id)
             }
         } else {
             index.insert(their_id.clone(), conn_id);
-            if let Some(entry) = entries.get_mut(&conn_id) {
-                entry.peer_id = Some(their_id);
-                entry.state = ConnectionState::Established;
+            entries.insert(conn_id, entry);
+            Ok(conn_id)
+        }
+    }
+
+    pub fn reserve_id(&self) -> u64 {
+        self.next_conn_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn remove(&self, conn_id: u64) {
+        if let Ok(mut entries) = self.entries.lock()
+            && let Some(mut entry) = entries.remove(&conn_id)
+        {
+            entry.state = ConnectionState::Closing;
+            let peer_id = entry.connection.remote_peer_id.clone();
+            if let Ok(mut index) = self.peer_index.lock()
+                && matches!(index.get(&peer_id), Some(&id) if id == conn_id)
+            {
+                index.remove(&peer_id);
             }
-            Ok(())
         }
     }
 
@@ -170,13 +125,13 @@ impl ConnectionManager {
             index.get(peer_id).copied()
         };
 
-        let conn_arc = if let Some(id) = conn_id {
+        let conn_sender = if let Some(id) = conn_id {
             let mut entries = self
                 .entries
                 .lock()
                 .map_err(|_| Error::other("entries lock poisoned"))?;
             if let Some(entry) = entries.get_mut(&id) {
-                Some(entry.connection.clone())
+                Some(entry.connection.sender.clone())
             } else {
                 None
             }
@@ -184,12 +139,11 @@ impl ConnectionManager {
             None
         };
 
-        if let Some(conn_arc) = conn_arc {
-            let mut conn = conn_arc
-                .lock()
-                .map_err(|_| Error::other("connection lock poisoned"))?;
+        if let Some(sender) = conn_sender {
             let frame: crate::protocol::Frame = message.into();
-            return conn.send(&frame);
+            return sender
+                .send(frame)
+                .map_err(|_| Error::new(ErrorKind::BrokenPipe, "Writer thread closed"));
         }
 
         Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))

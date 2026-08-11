@@ -15,8 +15,9 @@ pub enum Direction {
 }
 
 pub struct Connection {
-    pub remote_peer_id: Option<PeerId>,
-    pub(crate) stream: TcpStream,
+    pub remote_peer_id: PeerId,
+    pub direction: Direction,
+    pub sender: std::sync::mpsc::Sender<Frame>,
 }
 
 pub struct ConnectionReader {
@@ -26,8 +27,10 @@ pub struct ConnectionReader {
 
 impl Connection {
     pub fn new(
-        stream: TcpStream,
+        mut stream: TcpStream,
         remote_addr: SocketAddr,
+        remote_peer_id: PeerId,
+        direction: Direction,
     ) -> Result<(Self, ConnectionReader), Error> {
         let _ = stream.set_nonblocking(false);
         let _ = stream.set_nodelay(true);
@@ -61,20 +64,33 @@ impl Connection {
 
         let read_stream = stream.try_clone()?;
 
+        let (tx, rx) = std::sync::mpsc::channel::<Frame>();
+
+        let remote_addr_clone = remote_addr;
+        std::thread::spawn(move || {
+            let mut codec = LengthPrefixCodec;
+            while let Ok(frame) = rx.recv() {
+                if let Err(e) = codec.encode(&frame, &mut stream) {
+                    eprintln!(
+                        "Writer thread for {} exited due to error: {}",
+                        remote_addr_clone, e
+                    );
+                    break;
+                }
+            }
+        });
+
         let writer = Self {
-            remote_peer_id: None,
-            stream,
+            remote_peer_id,
+            direction,
+            sender: tx,
         };
+
         let reader = ConnectionReader {
             stream: read_stream,
             remote_addr,
         };
 
         Ok((writer, reader))
-    }
-
-    pub fn send(&mut self, frame: &Frame) -> Result<(), Error> {
-        let mut codec = LengthPrefixCodec;
-        codec.encode(frame, &mut self.stream)
     }
 }

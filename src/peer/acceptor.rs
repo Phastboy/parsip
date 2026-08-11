@@ -1,6 +1,6 @@
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
+
 use std::thread;
 
 use crate::connection::{Connection, Direction};
@@ -10,44 +10,26 @@ use crate::peer::{Peer, PeerEvent};
 impl Peer {
     pub(crate) fn register_connection(
         &self,
-        stream: TcpStream,
+        mut stream: TcpStream,
         remote_addr: SocketAddr,
         direction: Direction,
     ) -> Result<PeerId, Error> {
-        let (connection, reader) = Connection::new(stream, remote_addr)?;
-        let connection_arc = Arc::new(std::sync::Mutex::new(connection));
-
-        let conn_id = self
-            .manager
-            .insert_pending(connection_arc.clone(), direction)?;
-
-        let handshake_result = {
-            let mut conn = connection_arc.lock().unwrap();
-            conn.handshake(&self.identity)
-        };
-
-        let their_id = match handshake_result {
-            Ok(id) => id,
-            Err(e) => {
-                self.manager.remove(conn_id);
-                return Err(e);
-            }
-        };
+        let their_id =
+            crate::connection::handshake::perform_handshake(&mut stream, &self.identity)?;
 
         if their_id == self.id {
-            self.manager.remove(conn_id);
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 "Rejected self-connection",
             ));
         }
 
-        self.manager
-            .promote_to_established(conn_id, &self.id, their_id.clone())?;
+        let (connection, reader) =
+            Connection::new(stream, remote_addr, their_id.clone(), direction)?;
 
-        // If we reach here, we survived deduplication and the connection is officially registered.
+        let conn_id = self.manager.insert_connection(connection, &self.id)?;
+
         let manager_for_cleanup = self.manager.clone();
-
         let tx_clone = self.event_tx.clone();
         let peer_id_for_loop = their_id.clone();
 
