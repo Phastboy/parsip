@@ -20,46 +20,81 @@ mod random;
 mod request_tracker;
 mod resource;
 
-fn stop_daemon(pid_file: &std::path::Path) {
-    if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
-        if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            let cmdline_path = format!("/proc/{}/cmdline", pid);
-            let is_parsip = fs::read_to_string(&cmdline_path)
-                .map(|s| s.contains("parsip"))
-                .unwrap_or(false);
+fn stop_daemon(pid_file: &std::path::Path) -> bool {
+    let pid_str = match std::fs::read_to_string(pid_file) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("Daemon doesn't seem to be running (no parsip.pid found).");
+            return true;
+        }
+    };
 
-            if !is_parsip && std::path::Path::new(&cmdline_path).exists() {
-                eprintln!(
-                    "PID {} does not belong to parsip. Removing stale PID file.",
-                    pid
-                );
-                let _ = fs::remove_file(pid_file);
-                return;
-            }
+    let pid = match pid_str.trim().parse::<i32>() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("Invalid PID file contents. Removing stale PID file.");
+            let _ = fs::remove_file(pid_file);
+            return true;
+        }
+    };
 
-            if std::process::Command::new("kill")
-                .arg(pid.to_string())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                // bounded wait up to 5 seconds
-                for _ in 0..50 {
-                    if !std::path::Path::new(&format!("/proc/{}", pid)).exists() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                println!("Stopped parsip daemon (PID: {})", pid);
-                let _ = fs::remove_file(pid_file);
-            } else {
-                eprintln!("Failed to stop parsip daemon (PID: {}).", pid);
+    if pid <= 1 {
+        eprintln!("Invalid PID {}. Rejecting.", pid);
+        return false;
+    }
+
+    let exe_path = fs::read_link(format!("/proc/{}/exe", pid)).unwrap_or_default();
+    let is_parsip_exe = exe_path.file_name().map(|n| n == "parsip").unwrap_or(false);
+
+    let cmdline = fs::read(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+    let has_daemon_arg = cmdline.windows(7).any(|w| w == b"daemon\0");
+
+    let is_parsip = is_parsip_exe && has_daemon_arg;
+    let proc_exists = std::path::Path::new(&format!("/proc/{}", pid)).exists();
+
+    if !is_parsip && proc_exists {
+        eprintln!(
+            "PID {} does not belong to parsip. Removing stale PID file.",
+            pid
+        );
+        let _ = fs::remove_file(pid_file);
+        return true;
+    } else if !proc_exists {
+        println!("Daemon doesn't seem to be running. Removing stale PID file.");
+        let _ = fs::remove_file(pid_file);
+        return true;
+    }
+
+    if std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        // bounded wait up to 5 seconds
+        let mut exited = false;
+        for _ in 0..50 {
+            if !std::path::Path::new(&format!("/proc/{}", pid)).exists() {
+                exited = true;
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        if exited {
+            println!("Stopped parsip daemon (PID: {})", pid);
+            let _ = fs::remove_file(pid_file);
+            true
         } else {
-            eprintln!("Invalid PID file contents.");
+            eprintln!(
+                "Failed to stop parsip daemon (PID: {}): timed out waiting for exit.",
+                pid
+            );
+            false
         }
     } else {
-        println!("Daemon doesn't seem to be running (no parsip.pid found).");
+        eprintln!("Failed to stop parsip daemon (PID: {}).", pid);
+        false
     }
 }
 
@@ -184,7 +219,9 @@ fn main() -> Result<(), Error> {
                 stop_daemon(&pid_file);
             }
             "restart" => {
-                stop_daemon(&pid_file);
+                if !stop_daemon(&pid_file) {
+                    std::process::exit(1);
+                }
 
                 let socket_path = config::Config::control_socket_path();
                 if socket_path.exists()
