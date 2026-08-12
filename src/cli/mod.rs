@@ -112,7 +112,10 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     let mut stream = match std::os::unix::net::UnixStream::connect(&socket_path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to connect to daemon. Is 'parsip daemon' running? Error: {}", e);
+            eprintln!(
+                "Failed to connect to daemon. Is 'parsip daemon' running? Error: {}",
+                e
+            );
             return Err(e);
         }
     };
