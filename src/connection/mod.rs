@@ -81,7 +81,9 @@ impl Connection {
                         "Writer thread for {} exited due to error: {}",
                         remote_addr_clone, e
                     );
-                    let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                    let _ = writer
+                        .into_inner()
+                        .map(|s| s.shutdown(std::net::Shutdown::Both));
                     return;
                 }
                 // Drain any immediately available frames from the channel to coalesce
@@ -92,7 +94,9 @@ impl Connection {
                             "Writer thread for {} exited due to error: {}",
                             remote_addr_clone, e
                         );
-                        let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                        let _ = writer
+                            .into_inner()
+                            .map(|s| s.shutdown(std::net::Shutdown::Both));
                         return;
                     }
                 }
@@ -101,11 +105,10 @@ impl Connection {
                 // BufWriter to the kernel. This keeps latency low for control
                 // messages while still batching bulk data frames.
                 if let Err(e) = writer.flush() {
-                    eprintln!(
-                        "Writer thread for {} flush error: {}",
-                        remote_addr_clone, e
-                    );
-                    let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                    eprintln!("Writer thread for {} flush error: {}", remote_addr_clone, e);
+                    let _ = writer
+                        .into_inner()
+                        .map(|s| s.shutdown(std::net::Shutdown::Both));
                     return;
                 }
             }

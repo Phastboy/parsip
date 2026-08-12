@@ -53,22 +53,15 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
     match event {
         PeerEvent::Discovered(peer_id, addr, nickname) => {
             let alias = ctx.aliases.add_peer(peer_id.clone());
-            if !ctx.aliases.discovered_peers.contains_key(&peer_id) {
-                ctx.aliases.discovered_peers.insert(
-                    peer_id.clone(),
-                    crate::daemon::control::DiscoveredPeerInfo {
-                        alias: alias.clone(),
-                        nickname: nickname.clone(),
-                        address: addr,
-                    },
-                );
-                if !ctx.peer.is_connected(&peer_id) {
-                    println!(
-                        "[Discovery] Found peer {:?} at {} (alias: {}, nickname: {})",
-                        peer_id, addr, alias, nickname
-                    );
-                }
-            }
+            // Always insert/update the latest address and nickname
+            ctx.aliases.discovered_peers.insert(
+                peer_id.clone(),
+                crate::daemon::control::DiscoveredPeerInfo {
+                    alias,
+                    nickname: nickname.clone(),
+                    address: addr,
+                },
+            );
         }
         PeerEvent::NewConnection(peer_id) => {
             let alias = ctx.aliases.add_peer(peer_id.clone());
@@ -78,23 +71,16 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
             );
         }
         PeerEvent::Disconnected(peer_id) => {
-            let alias = ctx
-                .aliases
-                .peer_id_to_alias
-                .get(&peer_id)
-                .cloned()
-                .unwrap_or_else(|| format!("{:?}", peer_id));
-            println!("[Event] Peer {} disconnected", alias);
-
+            println!("[Protocol] Peer {:?} disconnected", peer_id);
+            if let Some(alias) = ctx.aliases.peer_id_to_alias.remove(&peer_id) {
+                ctx.aliases.peer_aliases.remove(&alias);
+            }
             let cancelled = ctx.transfer_mgr.cancel_for_peer(&peer_id);
             for t in cancelled {
-                // Remove the partial temp file from the download manager
                 let _ = ctx.download_mgr.cancel_download(t.request_id);
-                // Unblock the CLI with an error response
                 if let Some(sender) = ctx.req_tracker.complete(t.request_id) {
                     let _ = sender.send(crate::daemon::control::ControlResponse::Error(
-                        format!("Transfer failed: peer {} disconnected mid-transfer ({} / {} bytes transferred)",
-                            alias, t.bytes_transferred, t.bytes_total)
+                        "Peer disconnected".to_string(),
                     ));
                 }
             }
@@ -124,12 +110,30 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
                 }
             }
         }
+        PeerEvent::UploadComplete {
+            request_id,
+            bytes,
+            elapsed_secs,
+            error,
+        } => {
+            if let Some(sender) = ctx.req_tracker.complete(request_id) {
+                if let Some(e) = error {
+                    let _ = sender.send(crate::daemon::control::ControlResponse::Error(e));
+                } else {
+                    let _ =
+                        sender.send(crate::daemon::control::ControlResponse::TransferComplete {
+                            bytes,
+                            elapsed_secs,
+                        });
+                }
+            }
+            // Also complete the local transfer state
+            ctx.transfer_mgr.complete(request_id);
+        }
     }
 }
 
-use crate::daemon::control::{
-    ConnectedPeerInfo, ControlMessage, ControlResponse,
-};
+use crate::daemon::control::{ConnectedPeerInfo, ControlMessage, ControlResponse};
 use crate::resource::PendingFinalization;
 use std::sync::mpsc::Sender;
 
@@ -138,24 +142,40 @@ const SCAN_TIMEOUT_MS: u64 = 500;
 /// Joins the disk writer thread, renames the temp file to its final name,
 /// and sends the completion (or error) response to the CLI.
 /// Must be called on a **background thread** — never on the event loop.
-fn finalize_download(
-    pending: PendingFinalization,
-    bytes: u64,
-    elapsed_secs: f64,
-    cli_tx: std::sync::mpsc::Sender<ControlResponse>,
-) {
-    let result = match pending.handle.join() {
-        Ok(Ok(())) => std::fs::rename(&pending.temp_path, &pending.final_path)
-            .map_err(|e| format!("Failed to move file: {}", e)),
-        Ok(Err(e)) => Err(format!("Disk write error: {}", e)),
-        Err(_) => Err("Writer thread panicked".to_string()),
-    };
+fn finalize_download(pending: PendingFinalization, bytes: u64, elapsed_secs: f64) {
+    let mut dest = pending.final_path.clone();
+    if dest.exists() {
+        let mut i = 1;
+        let ext = dest.extension().and_then(|s| s.to_str()).map(|s| format!(".{}", s)).unwrap_or_default();
+        let stem = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("file").to_string();
+        let parent = dest.parent().unwrap_or(std::path::Path::new("")).to_path_buf();
+        
+        while dest.exists() {
+            dest = parent.join(format!("{} ({}){}", stem, i, ext));
+            i += 1;
+        }
+    }
 
-    let resp = match result {
-        Ok(()) => ControlResponse::TransferComplete { bytes, elapsed_secs },
-        Err(e) => ControlResponse::Error(e),
+    match pending.handle.join() {
+        Ok(Ok(())) => {
+            if let Err(e) = std::fs::rename(&pending.temp_path, &dest) {
+                eprintln!("[Protocol] Failed to rename temp file: {}", e);
+            } else {
+                let mb = bytes as f64 / 1_000_000.0;
+                let mb_per_sec = if elapsed_secs > 0.0 {
+                    mb / elapsed_secs
+                } else {
+                    0.0
+                };
+                println!(
+                    "[Protocol] Download completed: {:?} ({:.2} MB/s)",
+                    dest, mb_per_sec
+                );
+            }
+        }
+        Ok(Err(e)) => eprintln!("[Protocol] Disk write error: {}", e),
+        Err(_) => eprintln!("[Protocol] Writer thread panicked"),
     };
-    let _ = cli_tx.send(resp);
 }
 
 fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<ControlResponse>) {
@@ -186,26 +206,28 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
             });
         }
         ControlMessage::Connect { alias } => {
-            if let Some(info) = ctx
-                .aliases
-                .discovered_peers
-                .values()
-                .find(|info| info.alias == alias)
-            {
-                let addr = info.address;
-                let rx = ctx.peer.connect(addr);
-                let req_id = ctx.req_tracker.next_id();
-                ctx.req_tracker.register(req_id, sender);
-                let event_tx = ctx.peer.event_tx.clone();
+            if let Some(peer_id) = ctx.aliases.get_peer(&alias) {
+                if let Some(info) = ctx.aliases.discovered_peers.get(&peer_id) {
+                    let addr = info.address;
+                    let rx = ctx.peer.connect(addr);
+                    let req_id = ctx.req_tracker.next_id();
+                    ctx.req_tracker.register(req_id, sender);
+                    let event_tx = ctx.peer.event_tx.clone();
 
-                std::thread::spawn(move || {
-                    let result = match rx.recv() {
-                        Ok(Ok(peer_id)) => Ok(peer_id),
-                        Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
-                        Err(_) => Err("Connection thread panicked".to_string()),
-                    };
-                    let _ = event_tx.send(PeerEvent::ConnectResult(req_id, result));
-                });
+                    std::thread::spawn(move || {
+                        let result = match rx.recv() {
+                            Ok(Ok(peer_id)) => Ok(peer_id),
+                            Ok(Err(e)) => Err(format!("Connection failed: {}", e)),
+                            Err(_) => Err("Connection thread panicked".to_string()),
+                        };
+                        let _ = event_tx.send(PeerEvent::ConnectResult(req_id, result));
+                    });
+                } else {
+                    let _ = sender.send(ControlResponse::Error(format!(
+                        "Peer alias {} found, but address is unknown",
+                        alias
+                    )));
+                }
             } else {
                 let _ = sender.send(ControlResponse::Error(format!(
                     "Unknown peer alias: {}",
@@ -225,7 +247,10 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
             }
             let _ = sender.send(ControlResponse::PeersList(connected));
         }
-        ControlMessage::SendResource { peer_alias, file_path } => {
+        ControlMessage::SendResource {
+            peer_alias,
+            file_path,
+        } => {
             if let Some(peer_id) = ctx.aliases.get_peer(&peer_alias) {
                 // Validate file exists and get size
                 let path = PathBuf::from(&file_path);
@@ -233,13 +258,15 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
                     Ok(m) if m.is_file() => m,
                     _ => {
                         let _ = sender.send(ControlResponse::Error(format!(
-                            "File not found or is a directory: {}", file_path
+                            "File not found or is a directory: {}",
+                            file_path
                         )));
                         return;
                     }
                 };
 
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unnamed_file")
                     .to_string();
@@ -247,15 +274,18 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
 
                 let req_id = ctx.req_tracker.next_id();
                 ctx.req_tracker.register(req_id, sender);
-                
+
                 // Track the pending upload
                 ctx.pending_uploads.insert(req_id, file_path.clone());
 
-                let _ = ctx.peer.send(&peer_id, &Message::SendResourceRequest {
-                    request_id: req_id,
-                    name,
-                    size,
-                });
+                let _ = ctx.peer.send(
+                    &peer_id,
+                    &Message::SendResourceRequest {
+                        request_id: req_id,
+                        name,
+                        size,
+                    },
+                );
             } else {
                 let _ = sender.send(ControlResponse::Error(format!(
                     "Unknown peer alias: {}",
@@ -268,10 +298,24 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
 
 fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg: Message) {
     match msg {
-        Message::SendResourceRequest { request_id, name, size } => {
+        Message::SendResourceRequest {
+            request_id,
+            name,
+            size,
+        } => {
+            if size > 7 * 1024 * 1024 * 1024 {
+                eprintln!(
+                    "[Protocol] Rejected request {} (size {} exceeds 7GB cap)",
+                    request_id, size
+                );
+                return;
+            }
             let alias = ctx.aliases.add_peer(peer_id.clone());
-            println!("[Protocol] Peer {} wants to send '{}' (req_id: {})", alias, name, request_id);
-            
+            println!(
+                "[Protocol] Peer {} wants to send '{}' (req_id: {})",
+                alias, name, request_id
+            );
+
             if let Ok(()) = ctx.download_mgr.start_download(request_id, &name, size) {
                 // Register transfer for progress tracking
                 ctx.transfer_mgr.register(crate::resource::Transfer {
@@ -283,12 +327,17 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                     last_report_time: std::time::Instant::now(),
                     last_report_bytes: 0,
                 });
-                
+
                 // Automatically accept the transfer
-                let _ = ctx.peer.send(&peer_id, &Message::SendResourceAccept { request_id });
+                let _ = ctx
+                    .peer
+                    .send(&peer_id, &Message::SendResourceAccept { request_id });
                 println!("[Protocol] Accepted transfer {}", request_id);
             } else {
-                eprintln!("[Protocol] Failed to start download for request {}", request_id);
+                eprintln!(
+                    "[Protocol] Failed to start download for request {}",
+                    request_id
+                );
             }
         }
         Message::SendResourceAccept { request_id } => {
@@ -296,11 +345,11 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
             if let Some(file_path) = ctx.pending_uploads.remove(&request_id) {
                 let peer_clone = ctx.peer.clone();
                 let peer_id_clone = peer_id.clone();
-                
+
                 // Track transfer progress for upload
                 let path_buf = PathBuf::from(&file_path);
                 let size = std::fs::metadata(&path_buf).map(|m| m.len()).unwrap_or(0);
-                
+
                 ctx.transfer_mgr.register(crate::resource::Transfer {
                     request_id,
                     peer_id: peer_id.clone(),
@@ -314,6 +363,9 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                 if let Some(sender) = ctx.req_tracker.get(request_id) {
                     let _ = sender.send(ControlResponse::TransferInitiated);
                 }
+
+                let event_tx_clone = ctx.peer.event_tx.clone();
+                let start_time = std::time::Instant::now();
 
                 std::thread::spawn(move || {
                     use std::io::Read;
@@ -331,42 +383,78 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                                         data,
                                     };
                                     if peer_clone.send(&peer_id_clone, &chunk_msg).is_err() {
-                                        eprintln!("[Protocol] Connection lost during file stream");
+                                        let _ = event_tx_clone.send(PeerEvent::UploadComplete {
+                                            request_id,
+                                            bytes: offset,
+                                            elapsed_secs: start_time.elapsed().as_secs_f64(),
+                                            error: Some(
+                                                "Connection lost during file stream".to_string(),
+                                            ),
+                                        });
                                         return;
                                     }
                                     offset += bytes_read as u64;
                                 }
                                 Err(e) => {
-                                    eprintln!("[Protocol] Error reading file: {}", e);
+                                    let _ = event_tx_clone.send(PeerEvent::UploadComplete {
+                                        request_id,
+                                        bytes: offset,
+                                        elapsed_secs: start_time.elapsed().as_secs_f64(),
+                                        error: Some(format!("Error reading file: {}", e)),
+                                    });
                                     return;
                                 }
                             }
                         }
-                        if peer_clone.send(&peer_id_clone, &Message::ResourceEnd { request_id }).is_err() {
-                            eprintln!("[Protocol] Failed to send ResourceEnd for request {}: connection lost", request_id);
+                        if peer_clone
+                            .send(&peer_id_clone, &Message::ResourceEnd { request_id })
+                            .is_err()
+                        {
+                            let _ = event_tx_clone.send(PeerEvent::UploadComplete {
+                                request_id,
+                                bytes: offset,
+                                elapsed_secs: start_time.elapsed().as_secs_f64(),
+                                error: Some(
+                                    "Failed to send ResourceEnd: connection lost".to_string(),
+                                ),
+                            });
+                        } else {
+                            let _ = event_tx_clone.send(PeerEvent::UploadComplete {
+                                request_id,
+                                bytes: offset,
+                                elapsed_secs: start_time.elapsed().as_secs_f64(),
+                                error: None,
+                            });
                         }
+                    } else {
+                        let _ = event_tx_clone.send(PeerEvent::UploadComplete {
+                            request_id,
+                            bytes: 0,
+                            elapsed_secs: start_time.elapsed().as_secs_f64(),
+                            error: Some("Failed to open file for reading".to_string()),
+                        });
                     }
                 });
             } else {
-                eprintln!("[Protocol] Unknown or already active upload request {}", request_id);
+                eprintln!(
+                    "[Protocol] Unknown or already active upload request {}",
+                    request_id
+                );
             }
         }
         Message::ResourceChunk {
-            request_id,
-            data,
-            ..
+            request_id, data, ..
         } => {
             let data_len = data.len() as u64;
             match ctx.download_mgr.process_chunk(request_id, data) {
                 Ok(_) => {
-                    if let Some((bytes, total, mbps)) = ctx.transfer_mgr.update_progress(request_id, data_len)
-                        && let Some(sender) = ctx.req_tracker.get(request_id)
-                    {
-                        let _ = sender.send(ControlResponse::TransferProgress { bytes, total, mbps });
-                    }
+                    let _ = ctx.transfer_mgr.update_progress(request_id, data_len);
                 }
                 Err(e) => {
-                    eprintln!("[Protocol] Chunk write error for request {}: {}", request_id, e);
+                    eprintln!(
+                        "[Protocol] Chunk write error for request {}: {}",
+                        request_id, e
+                    );
                 }
             }
         }
@@ -376,34 +464,23 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                     if let Some(t) = ctx.transfer_mgr.complete(request_id) {
                         let elapsed_secs = t.start_time.elapsed().as_secs_f64();
                         let bytes = t.bytes_transferred;
-                        println!("[Protocol] Finalizing download for request {} ({} bytes)", request_id, bytes);
-                        // Download side completion
-                        if let Some(cli_tx) = ctx.req_tracker.complete(request_id) {
-                            std::thread::spawn(move || {
-                                finalize_download(pending, bytes, elapsed_secs, cli_tx);
-                            });
-                        }
+                        println!(
+                            "[Protocol] Finalizing download for request {} ({} bytes)",
+                            request_id, bytes
+                        );
+                        std::thread::spawn(move || {
+                            finalize_download(pending, bytes, elapsed_secs);
+                        });
                     }
-                }
-                Ok(None) => {
-                    // This could be the upload side finishing. The sender gets ResourceEnd? No, sender sends ResourceEnd.
-                    // Wait, the sender sends ResourceEnd, the receiver receives it.
-                    // So if DownloadManager returns Ok(None), it means it's not a download.
                 }
                 Err(e) => {
-                    eprintln!("[Protocol] Failed to complete download for request {}: {}", request_id, e);
-                    if let Some(cli_tx) = ctx.req_tracker.complete(request_id) {
-                        let _ = cli_tx.send(ControlResponse::Error(format!("Download finalization failed: {}", e)));
-                    }
+                    eprintln!(
+                        "[Protocol] Failed to complete download for request {}: {}",
+                        request_id, e
+                    );
                 }
+                Ok(None) => {}
             }
-
-            // If we are the sender, we don't receive ResourceEnd, we send it.
-            // But wait, the upload thread finishes and sends ResourceEnd. The Receiver receives it.
-            // Progress tracking for the sender: we need to complete the transfer when upload finishes.
-            // Where do we complete the upload transfer? We don't have an ack for completion.
-            // The upload thread finishes. We can just complete it from the upload thread!
-            // Let's not worry about sender completion for now, we'll fix it if needed.
         }
         _ => {}
     }

@@ -154,7 +154,9 @@ fn wait_for_daemon_start() {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    eprintln!("Failed to start daemon (timed out waiting for Unix socket). Check daemon_err.log for details.");
+    eprintln!(
+        "Failed to start daemon (timed out waiting for Unix socket). Check daemon_err.log for details."
+    );
     std::process::exit(1);
 }
 
@@ -166,7 +168,12 @@ fn main() -> Result<(), Error> {
         let mut cmd = "start";
         let mut i = 2;
 
-        if args.len() > 2 && matches!(args[2].as_str(), "start" | "stop" | "restart" | "_internal_start") {
+        if args.len() > 2
+            && matches!(
+                args[2].as_str(),
+                "start" | "stop" | "restart" | "_internal_start"
+            )
+        {
             cmd = args[2].as_str();
             i = 3;
         }

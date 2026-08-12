@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Error, ErrorKind, Write};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 /// A chunk of data or a termination signal for the writer thread.
@@ -16,7 +16,7 @@ pub struct ActiveDownload {
     pub received_bytes: u64,
     pub temp_path: PathBuf,
     /// Send chunks here — the writer thread owns the file handle.
-    writer_tx: Sender<WriteCmd>,
+    writer_tx: mpsc::SyncSender<WriteCmd>,
     /// The background thread that owns the BufWriter<File>.
     /// `None` after `complete_download` or `cancel_download` consumes it.
     writer_handle: Option<JoinHandle<Result<(), Error>>>,
@@ -57,7 +57,7 @@ impl DownloadManager {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unnamed_file");
-            
+
         let temp_path = self.downloads_dir.join(format!(".tmp_{}", request_id));
         let temp_file = OpenOptions::new()
             .write(true)
@@ -65,10 +65,10 @@ impl DownloadManager {
             .truncate(true)
             .open(&temp_path)?;
 
-        // Unbounded channel: event loop sends chunk data here without ever blocking.
-        // The writer thread drains it. In practice (disk >> network throughput)
-        // the channel stays near-empty.
-        let (tx, rx) = mpsc::channel::<WriteCmd>();
+        // Bounded channel: event loop sends chunk data here. Backpressure is applied
+        // when 64 chunks (8MB total) are buffered, preventing memory exhaustion
+        // on slow disk writes.
+        let (tx, rx) = mpsc::sync_channel::<WriteCmd>(64);
 
         let handle: JoinHandle<Result<(), Error>> = std::thread::spawn(move || {
             // 256KB write buffer: chunks arrive at 128KB; the buffer smooths two
@@ -105,8 +105,7 @@ impl DownloadManager {
 
     /// Forward a chunk to the writer thread. Takes ownership of `data` to
     /// avoid a copy (the Vec is moved directly into the channel).
-    /// Returns `Ok(true)` when all expected bytes have been received.
-    pub fn process_chunk(&mut self, request_id: u32, data: Vec<u8>) -> Result<bool, Error> {
+    pub fn process_chunk(&mut self, request_id: u32, data: Vec<u8>) -> Result<(), Error> {
         if let Some(download) = self.downloads.get_mut(&request_id) {
             let len = data.len() as u64;
             if download.writer_tx.send(Some(data)).is_err() {
@@ -116,7 +115,7 @@ impl DownloadManager {
                 ));
             }
             download.received_bytes += len;
-            return Ok(download.received_bytes >= download.size);
+            return Ok(());
         }
         Err(Error::new(ErrorKind::NotFound, "Download not found"))
     }
@@ -126,17 +125,38 @@ impl DownloadManager {
     ///
     /// **This method never blocks.** The join + rename happen in the
     /// returned handle so the event-loop thread is never stalled.
-    pub fn complete_download(&mut self, request_id: u32) -> Result<Option<PendingFinalization>, Error> {
+    pub fn complete_download(
+        &mut self,
+        request_id: u32,
+    ) -> Result<Option<PendingFinalization>, Error> {
         if let Some(mut download) = self.downloads.remove(&request_id) {
+            if download.received_bytes != download.size {
+                drop(download.writer_tx);
+                if let Some(handle) = download.writer_handle.take() {
+                    let _ = handle.join();
+                }
+                let _ = fs::remove_file(&download.temp_path);
+                return Err(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    format!(
+                        "Incomplete transfer: received {} of {} bytes",
+                        download.received_bytes, download.size
+                    ),
+                ));
+            }
+
             // Signal the writer to flush and exit
             let _ = download.writer_tx.send(None);
 
             let final_path = self.downloads_dir.join(&download.name);
-            let pending = download.writer_handle.take().map(|handle| PendingFinalization {
-                handle,
-                temp_path: download.temp_path,
-                final_path,
-            });
+            let pending = download
+                .writer_handle
+                .take()
+                .map(|handle| PendingFinalization {
+                    handle,
+                    temp_path: download.temp_path,
+                    final_path,
+                });
             Ok(pending)
         } else {
             Err(Error::new(ErrorKind::NotFound, "Download not found"))
@@ -144,16 +164,17 @@ impl DownloadManager {
     }
 
     /// Cancel a download mid-flight (e.g. peer disconnected) and delete the temp file.
-    /// Does NOT join the writer thread — lets it exit naturally in the background.
+    /// Joins the writer thread to ensure cross-platform safety when deleting the open file.
     pub fn cancel_download(&mut self, request_id: u32) -> Result<(), Error> {
         if let Some(mut download) = self.downloads.remove(&request_id) {
             // Drop the sender to close the channel. The writer thread sees
-            // Err on recv() and exits. We do NOT join — it may have pending
-            // chunks in its buffer; draining them would waste time on a cancel.
+            // Err on recv() and exits.
             drop(download.writer_tx);
-            // Detach the writer thread (drop the JoinHandle)
-            drop(download.writer_handle.take());
-            // Best-effort cleanup of the partial temp file
+            // Join the writer thread to wait for it to drop the file handle
+            if let Some(handle) = download.writer_handle.take() {
+                let _ = handle.join();
+            }
+            // Safe cleanup of the partial temp file now that it's closed
             let _ = fs::remove_file(&download.temp_path);
             Ok(())
         } else {

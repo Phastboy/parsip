@@ -74,7 +74,7 @@ fn parse_resource_chunk(mut payload: Vec<u8>) -> Result<Message, Error> {
     }
     let request_id = u32::from_be_bytes(payload[0..4].try_into().unwrap());
     let offset = u64::from_be_bytes(payload[4..12].try_into().unwrap());
-    
+
     payload.drain(0..12);
     let data = payload;
     Ok(Message::ResourceChunk {

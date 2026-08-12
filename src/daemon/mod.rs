@@ -27,7 +27,8 @@ pub fn run(config: Config) -> Result<(), Error> {
     let mut request_tracker = RequestTracker::new();
 
     // Maps request_id -> source file path (for pending uploads)
-    let mut pending_uploads: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    let mut pending_uploads: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
     let mut download_mgr = DownloadManager::new(config.downloads_dir.clone());
     let mut aliases = AliasRegistry::new();
     let mut transfer_mgr = crate::resource::TransferManager::new();

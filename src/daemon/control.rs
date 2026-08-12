@@ -39,5 +39,3 @@ pub struct ConnectedPeerInfo {
     pub alias: String,
     pub peer_id: PeerId,
 }
-
-

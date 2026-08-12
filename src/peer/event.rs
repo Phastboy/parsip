@@ -12,4 +12,10 @@ pub enum PeerEvent {
     ControlRequest(ControlMessage, Sender<ControlResponse>),
     ScanTimeout(u32),
     ConnectResult(u32, Result<PeerId, String>),
+    UploadComplete {
+        request_id: u32,
+        bytes: u64,
+        elapsed_secs: f64,
+        error: Option<String>,
+    },
 }
