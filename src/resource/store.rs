@@ -1,7 +1,7 @@
 use crate::protocol::{ResourceInfo, message::types::ResourceId};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -13,22 +13,12 @@ pub struct LocalResourceStore {
 
 impl LocalResourceStore {
     pub fn new(shared_dir: PathBuf) -> Self {
-        let mut index = HashMap::new();
-
-        if let Ok(entries) = fs::read_dir(&shared_dir) {
-            for entry in entries.flatten() {
-                if let Ok(metadata) = entry.metadata()
-                    && metadata.is_file()
-                {
-                    let path = entry.path();
-                    let _ = Self::hash_file(&path, &mut index);
-                }
-            }
-        }
-
+        // Files are registered explicitly via `parsip add`.
+        // We intentionally do NOT scan shared_dir on startup to avoid blocking
+        // the daemon for seconds/minutes while SHA-256 hashing large files.
         Self {
             _shared_dir: shared_dir,
-            index,
+            index: HashMap::new(),
         }
     }
 

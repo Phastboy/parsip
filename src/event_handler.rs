@@ -113,10 +113,9 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
         PeerEvent::Disconnected(peer_id) => {
             let alias = ctx
                 .aliases
-                .peer_aliases
-                .iter()
-                .find(|(_, id)| *id == &peer_id)
-                .map(|(a, _)| a.clone())
+                .peer_id_to_alias
+                .get(&peer_id)
+                .cloned()
                 .unwrap_or_else(|| format!("{:?}", peer_id));
             println!("[Event] Peer {} disconnected", alias);
 
@@ -166,7 +165,33 @@ pub fn handle_event(ctx: &mut DaemonContext, event: PeerEvent) {
 use crate::daemon::control::{
     ConnectedPeerInfo, ControlMessage, ControlResponse, ResourceInfo as CtrlResourceInfo,
 };
+use crate::resource::PendingFinalization;
 use std::sync::mpsc::Sender;
+
+const SCAN_TIMEOUT_MS: u64 = 500;
+
+/// Joins the disk writer thread, renames the temp file to its final name,
+/// and sends the completion (or error) response to the CLI.
+/// Must be called on a **background thread** — never on the event loop.
+fn finalize_download(
+    pending: PendingFinalization,
+    bytes: u64,
+    elapsed_secs: f64,
+    cli_tx: std::sync::mpsc::Sender<ControlResponse>,
+) {
+    let result = match pending.handle.join() {
+        Ok(Ok(())) => std::fs::rename(&pending.temp_path, &pending.final_path)
+            .map_err(|e| format!("Failed to move file: {}", e)),
+        Ok(Err(e)) => Err(format!("Disk write error: {}", e)),
+        Err(_) => Err("Writer thread panicked".to_string()),
+    };
+
+    let resp = match result {
+        Ok(()) => ControlResponse::DownloadComplete { bytes, elapsed_secs },
+        Err(e) => ControlResponse::Error(e),
+    };
+    let _ = cli_tx.send(resp);
+}
 
 fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<ControlResponse>) {
     match cmd {
@@ -191,7 +216,7 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
 
             let event_tx = ctx.peer.event_tx.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(SCAN_TIMEOUT_MS));
                 let _ = event_tx.send(PeerEvent::ScanTimeout(req_id));
             });
         }
@@ -393,14 +418,20 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                                 }
                             }
                         }
-                        // Send End
-                        let _ = peer_clone.send(
-                            &peer_id_clone,
-                            &Message::ResourceEnd {
-                                request_id,
-                                id: id_clone,
-                            },
-                        );
+                        // Send ResourceEnd — if this fails the downloader will never
+                        // receive a completion signal and the CLI will hang. Log the error.
+                        if peer_clone
+                            .send(
+                                &peer_id_clone,
+                                &Message::ResourceEnd {
+                                    request_id,
+                                    id: id_clone,
+                                },
+                            )
+                            .is_err()
+                        {
+                            eprintln!("[Protocol] Failed to send ResourceEnd for request {}: connection lost", request_id);
+                        }
                     }
                 });
             }
@@ -411,32 +442,54 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
             data,
             ..
         } => {
-            if ctx.download_mgr.process_chunk(&id, &data).is_ok()
-                && let Some((bytes, total, mbps)) = ctx
-                    .transfer_mgr
-                    .update_progress(request_id, data.len() as u64)
-                && let Some(sender) = ctx.req_tracker.get(request_id)
-            {
-                let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
+            let data_len = data.len() as u64;
+            // move `data` into process_chunk to avoid a to_vec() copy
+            match ctx.download_mgr.process_chunk(&id, data) {
+                Ok(all_received) => {
+                    if let Some((bytes, total, mbps)) = ctx
+                        .transfer_mgr
+                        .update_progress(request_id, data_len)
+                        && let Some(sender) = ctx.req_tracker.get(request_id)
+                    {
+                        let _ = sender.send(ControlResponse::DownloadProgress { bytes, total, mbps });
+                    }
+                    // If we have all the bytes but ResourceEnd hasn't arrived yet,
+                    // we still wait for it. all_received is informational here —
+                    // the true completion signal is ResourceEnd.
+                    let _ = all_received;
+                }
+                Err(e) => {
+                    eprintln!("[Protocol] Chunk write error for request {}: {}", request_id, e);
+                }
             }
         }
         Message::ResourceEnd { request_id, id } => {
-            if let Ok(()) = ctx.download_mgr.complete_download(&id) {
-                if let Some(t) = ctx.transfer_mgr.complete(request_id) {
-                    let elapsed_secs = t.start_time.elapsed().as_secs_f64();
-                    println!(
-                        "[Protocol] Download complete for {:?} ({} bytes)",
-                        id, t.bytes_transferred
-                    );
-
-                    if let Some(sender) = ctx.req_tracker.complete(request_id) {
-                        let _ = sender.send(ControlResponse::DownloadComplete {
-                            bytes: t.bytes_transferred,
-                            elapsed_secs,
-                        });
+            match ctx.download_mgr.complete_download(&id) {
+                Ok(Some(pending)) => {
+                    if let Some(t) = ctx.transfer_mgr.complete(request_id) {
+                        let elapsed_secs = t.start_time.elapsed().as_secs_f64();
+                        let bytes = t.bytes_transferred;
+                        println!(
+                            "[Protocol] Finalizing download for {:?} ({} bytes)",
+                            id, bytes
+                        );
+                        if let Some(cli_tx) = ctx.req_tracker.complete(request_id) {
+                            // Join the writer and rename the file on a background thread
+                            // so the event loop is never blocked.
+                            std::thread::spawn(move || {
+                                finalize_download(pending, bytes, elapsed_secs, cli_tx);
+                            });
+                        }
                     }
-                } else {
-                    println!("[Protocol] Download complete for {:?}", id);
+                }
+                Ok(None) => {
+                    // Writer handle already consumed — no-op
+                }
+                Err(e) => {
+                    eprintln!("[Protocol] Failed to complete download for {:?}: {}", id, e);
+                    if let Some(cli_tx) = ctx.req_tracker.complete(request_id) {
+                        let _ = cli_tx.send(ControlResponse::Error(format!("Download finalization failed: {}", e)));
+                    }
                 }
             }
         }

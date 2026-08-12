@@ -117,59 +117,67 @@ impl Discovery {
     }
 
     /// Collect all useful broadcast addresses: the limited broadcast (255.255.255.255)
-    /// plus a directed subnet broadcast for every local IPv4 interface.
+    /// plus a directed subnet broadcast for every local IPv4 interface, derived from
+    /// the actual subnet mask in /proc/net/route.
     fn collect_broadcast_addrs() -> Vec<Ipv4Addr> {
         let mut addrs = vec![Ipv4Addr::BROADCAST]; // 255.255.255.255
 
-        // Try to enumerate local interfaces via /proc/net/if_inet6 alternative:
-        // the simplest portable way is to try binding UDP sockets and reading
-        // the local address. Instead, use a known-good fallback approach:
-        // read /proc/net/fib_trie on Linux for interface prefixes.
-        if let Ok(entries) = std::fs::read_to_string("/proc/net/fib_trie") {
-            let mut current_local: Option<Ipv4Addr> = None;
-            for line in entries.lines() {
-                let trimmed = line.trim();
-                // Lines like: "192.168.0.0/24" or "  |-- 192.168.0.100"
-                if let Some(addr_str) = trimmed
-                    .strip_prefix("|-- ")
-                    .or_else(|| trimmed.strip_prefix("+-- "))
-                    && let Ok(ip) = addr_str.trim().parse::<Ipv4Addr>()
-                    && !ip.is_loopback()
-                    && !ip.is_unspecified()
-                {
-                    current_local = Some(ip);
+        // /proc/net/route columns (whitespace-separated, all numbers are little-endian hex):
+        //   Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+        // We need columns 1 (Destination) and 7 (Mask).
+        // RTF_UP flag (0x1) filters out disabled routes; dest == 0 is the default gateway.
+        if let Ok(content) = std::fs::read_to_string("/proc/net/route") {
+            for line in content.lines().skip(1) {
+                // skip header
+                let fields: Vec<&str> = line.split_ascii_whitespace().collect();
+                if fields.len() < 8 {
+                    continue;
                 }
-                // LOCAL lines confirm this is a local address
-                if trimmed == "LOCAL"
-                    && let Some(local) = current_local.take()
-                {
-                    // Derive a /24 broadcast (most home networks use /24)
-                    // A more accurate version would read the prefix length,
-                    // but /24 covers the vast majority of home setups.
-                    let octets = local.octets();
-                    let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-                    if !addrs.contains(&broadcast) {
-                        addrs.push(broadcast);
-                    }
+                let Ok(dest_le) = u32::from_str_radix(fields[1], 16) else {
+                    continue;
+                };
+                let Ok(mask_le) = u32::from_str_radix(fields[7], 16) else {
+                    continue;
+                };
+                let Ok(flags) = u32::from_str_radix(fields[3], 16) else {
+                    continue;
+                };
+
+                // Skip down routes and the default gateway (dest == 0)
+                if flags & 0x1 == 0 || dest_le == 0 {
+                    continue;
+                }
+
+                // Values are little-endian; swap to get the canonical u32 for Ipv4Addr
+                let dest_be = dest_le.swap_bytes();
+                let mask_be = mask_le.swap_bytes();
+
+                let dest_ip = Ipv4Addr::from(dest_be);
+                if dest_ip.is_loopback() {
+                    continue;
+                }
+
+                // Broadcast = network_addr | ~mask  (both in big-endian u32)
+                let broadcast = Ipv4Addr::from(dest_be | !mask_be);
+                if !addrs.contains(&broadcast) {
+                    addrs.push(broadcast);
                 }
             }
         }
 
-        // Fallback: also try common home network ranges directly
-        // This is belt-and-suspenders in case /proc parsing fails
-        if addrs.len() == 1 {
-            // Try to determine our local IP by connecting a UDP socket (doesn't send anything)
-            if let Ok(sock) = UdpSocket::bind("0.0.0.0:0")
-                && sock.connect("8.8.8.8:80").is_ok()
-                && let Ok(local) = sock.local_addr()
-                && let IpAddr::V4(ip) = local.ip()
-                && !ip.is_loopback()
-            {
-                let octets = ip.octets();
-                let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
-                if !addrs.contains(&broadcast) {
-                    addrs.push(broadcast);
-                }
+        // Fallback: use a dummy UDP connect to discover the local IP and derive /24.
+        // Only used when /proc/net/route parsing fails or is unavailable.
+        if addrs.len() == 1
+            && let Ok(sock) = UdpSocket::bind("0.0.0.0:0")
+            && sock.connect("8.8.8.8:80").is_ok()
+            && let Ok(local) = sock.local_addr()
+            && let IpAddr::V4(ip) = local.ip()
+            && !ip.is_loopback()
+        {
+            let octets = ip.octets();
+            let broadcast = Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+            if !addrs.contains(&broadcast) {
+                addrs.push(broadcast);
             }
         }
 

@@ -23,6 +23,14 @@ pub struct ActiveDownload {
     writer_handle: Option<JoinHandle<Result<(), Error>>>,
 }
 
+/// Returned by `complete_download` so the caller can drive the final
+/// join + rename **off** the event-loop thread.
+pub struct PendingFinalization {
+    pub handle: JoinHandle<Result<(), Error>>,
+    pub temp_path: PathBuf,
+    pub final_path: PathBuf,
+}
+
 pub struct DownloadManager {
     downloads: HashMap<ResourceId, ActiveDownload>,
     downloads_dir: PathBuf,
@@ -89,41 +97,41 @@ impl DownloadManager {
         Ok(())
     }
 
-    /// Forward a chunk to the writer thread. No disk I/O on the event loop.
-    pub fn process_chunk(&mut self, id: &ResourceId, data: &[u8]) -> Result<bool, Error> {
+    /// Forward a chunk to the writer thread. Takes ownership of `data` to
+    /// avoid a copy (the Vec is moved directly into the channel).
+    /// Returns `Ok(true)` when all expected bytes have been received.
+    pub fn process_chunk(&mut self, id: &ResourceId, data: Vec<u8>) -> Result<bool, Error> {
         if let Some(download) = self.downloads.get_mut(id) {
-            // Clone the data once (to own it across the channel)
-            if download.writer_tx.send(Some(data.to_vec())).is_err() {
+            let len = data.len() as u64;
+            if download.writer_tx.send(Some(data)).is_err() {
                 return Err(Error::new(
                     ErrorKind::BrokenPipe,
                     "Writer thread exited prematurely",
                 ));
             }
-            download.received_bytes += data.len() as u64;
+            download.received_bytes += len;
             return Ok(download.received_bytes >= download.info.size);
         }
         Err(Error::new(ErrorKind::NotFound, "Download not found"))
     }
 
-    /// Flush and finalize the download. Blocks briefly while the writer thread
-    /// drains its channel and flushes its BufWriter (fast — memory-to-disk only).
-    pub fn complete_download(&mut self, id: &ResourceId) -> Result<(), Error> {
+    /// Signal the writer thread to flush and exit, then return a
+    /// `PendingFinalization` the caller must drive on a background thread.
+    ///
+    /// **This method never blocks.** The join + rename happen in the
+    /// returned handle so the event-loop thread is never stalled.
+    pub fn complete_download(&mut self, id: &ResourceId) -> Result<Option<PendingFinalization>, Error> {
         if let Some(mut download) = self.downloads.remove(id) {
-            // Signal the writer thread to flush and exit
+            // Signal the writer to flush and exit
             let _ = download.writer_tx.send(None);
 
-            // Wait for the writer to finish
-            if let Some(handle) = download.writer_handle.take() {
-                match handle.join() {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => return Err(Error::other("Writer thread panicked")),
-                }
-            }
-
             let final_path = self.downloads_dir.join(&download.info.name);
-            fs::rename(download.temp_path, final_path)?;
-            Ok(())
+            let pending = download.writer_handle.take().map(|handle| PendingFinalization {
+                handle,
+                temp_path: download.temp_path,
+                final_path,
+            });
+            Ok(pending)
         } else {
             Err(Error::new(ErrorKind::NotFound, "Download not found"))
         }
