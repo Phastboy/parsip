@@ -75,11 +75,7 @@ impl Connection {
             // produces ~6 frames/second due to scheduling latency alone.
             let mut writer = std::io::BufWriter::with_capacity(256 * 1024, stream);
             let mut codec = LengthPrefixCodec;
-            loop {
-                let frame = match rx.recv() {
-                    Ok(f) => f,
-                    Err(_) => break, // Sender dropped — all senders gone, exit cleanly
-                };
+            while let Ok(frame) = rx.recv() {
                 if let Err(e) = codec.encode(&frame, &mut writer) {
                     eprintln!(
                         "Writer thread for {} exited due to error: {}",
