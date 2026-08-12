@@ -129,7 +129,7 @@ fn stop_daemon(pid_file: &std::path::Path) -> bool {
         }
 
         if exited {
-            println!("Stopped parsip daemon (PID: {})", pid);
+            println!("Daemon stopped successfully.");
             let _ = fs::remove_file(pid_file);
             true
         } else {
@@ -145,6 +145,19 @@ fn stop_daemon(pid_file: &std::path::Path) -> bool {
     }
 }
 
+fn wait_for_daemon_start() {
+    let socket_path = crate::config::Config::control_socket_path();
+    for _ in 0..50 {
+        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+            println!("Daemon started successfully.");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    eprintln!("Failed to start daemon (timed out waiting for Unix socket). Check daemon_err.log for details.");
+    std::process::exit(1);
+}
+
 fn main() -> Result<(), Error> {
     let mut config = config::Config::load();
     let args: Vec<String> = env::args().collect();
@@ -153,7 +166,7 @@ fn main() -> Result<(), Error> {
         let mut cmd = "start";
         let mut i = 2;
 
-        if args.len() > 2 && matches!(args[2].as_str(), "start" | "stop" | "restart") {
+        if args.len() > 2 && matches!(args[2].as_str(), "start" | "stop" | "restart" | "_internal_start") {
             cmd = args[2].as_str();
             i = 3;
         }
@@ -225,7 +238,15 @@ fn main() -> Result<(), Error> {
 
         match cmd {
             "start" => {
-                start_daemon(config, parsip_dir, pid_file);
+                let exe = env::current_exe().unwrap();
+                let mut child = std::process::Command::new(exe)
+                    .arg("daemon")
+                    .arg("_internal_start")
+                    .args(&args[i..])
+                    .spawn()
+                    .unwrap();
+                child.wait().unwrap();
+                wait_for_daemon_start();
             }
             "stop" => {
                 stop_daemon(&pid_file);
@@ -234,6 +255,17 @@ fn main() -> Result<(), Error> {
                 if !stop_daemon(&pid_file) {
                     std::process::exit(1);
                 }
+                let exe = env::current_exe().unwrap();
+                let mut child = std::process::Command::new(exe)
+                    .arg("daemon")
+                    .arg("_internal_start")
+                    .args(&args[i..])
+                    .spawn()
+                    .unwrap();
+                child.wait().unwrap();
+                wait_for_daemon_start();
+            }
+            "_internal_start" => {
                 start_daemon(config, parsip_dir, pid_file);
             }
             _ => {
