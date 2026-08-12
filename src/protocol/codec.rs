@@ -92,11 +92,13 @@ impl Decoder for LengthPrefixCodec {
             ));
         }
 
-        let mut body = vec![0u8; frame_length];
-        stream.read_exact(&mut body)?;
+        let mut type_buf = [0u8; 1];
+        stream.read_exact(&mut type_buf)?;
+        let message_type = type_buf[0];
 
-        let message_type = body[0];
-        let payload = body[1..].to_vec();
+        let payload_length = frame_length - 1;
+        let mut payload = vec![0u8; payload_length];
+        stream.read_exact(&mut payload)?;
 
         Ok(Some(Frame {
             message_type,
