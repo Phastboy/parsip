@@ -75,6 +75,7 @@ impl Connection {
                         "Writer thread for {} exited due to error: {}",
                         remote_addr_clone, e
                     );
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
                     break;
                 }
             }

@@ -14,10 +14,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let base = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let parsip_dir = base.join(".parsip");
+        let parsip_dir = Self::parsip_dir();
 
         Self {
             listen_port: 9000,
@@ -31,10 +28,7 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Self {
-        let base = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let config_path = base.join(".parsip").join("config.toml");
+        let config_path = Self::parsip_dir().join("config.toml");
 
         if let Ok(content) = fs::read_to_string(&config_path) {
             match toml::from_str(&content) {
@@ -50,10 +44,7 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let base = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let parsip_dir = base.join(".parsip");
+        let parsip_dir = Self::parsip_dir();
         std::fs::create_dir_all(&parsip_dir)?;
 
         let config_path = parsip_dir.join("config.toml");
@@ -64,9 +55,13 @@ impl Config {
     }
 
     pub fn control_socket_path() -> PathBuf {
-        let base = std::env::var("HOME")
+        Self::parsip_dir().join("daemon.sock")
+    }
+
+    pub fn parsip_dir() -> PathBuf {
+        std::env::var("HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        base.join(".parsip").join("daemon.sock")
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(".parsip")
     }
 }
