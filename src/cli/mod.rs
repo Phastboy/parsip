@@ -62,6 +62,8 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         }
         return Ok(());
     }
+
+    let mut retries = 5;
     let msg = match cmd_str {
         "scan" => ControlMessage::Scan,
         "peers" => ControlMessage::ListPeers,
@@ -91,14 +93,21 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     };
 
     let socket_path = crate::config::Config::control_socket_path();
-    let mut stream = match std::os::unix::net::UnixStream::connect(&socket_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "Failed to connect to daemon. Is 'parsip daemon' running? Error: {}",
-                e
-            );
-            return Err(e);
+    let mut stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket_path) {
+            Ok(s) => break s,
+            Err(e) => {
+                if retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                eprintln!(
+                    "Failed to connect to daemon. Is 'parsip daemon' running? Error: {}",
+                    e
+                );
+                return Err(e);
+            }
         }
     };
 
