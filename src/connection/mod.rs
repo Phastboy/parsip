@@ -65,7 +65,7 @@ impl Connection {
         let read_stream = stream.try_clone()?;
 
         let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Frame>(64);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Frame>(256);
 
         let remote_addr_clone = remote_addr;
         std::thread::spawn(move || {

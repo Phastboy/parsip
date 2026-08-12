@@ -18,7 +18,7 @@ impl ConnectionReader {
 
         thread::spawn(move || {
             let mut codec = LengthPrefixCodec;
-            let mut buf_reader = std::io::BufReader::with_capacity(64 * 1024, self.stream);
+            let mut buf_reader = std::io::BufReader::with_capacity(256 * 1024, self.stream);
 
             loop {
                 match codec.decode(&mut buf_reader) {
