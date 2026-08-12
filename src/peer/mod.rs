@@ -49,7 +49,7 @@ impl Peer {
 
     pub fn listen(&self) -> Result<TcpListener, Error> {
         let socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
+            socket2::Domain::for_address(self.address),
             socket2::Type::STREAM,
             Some(socket2::Protocol::TCP),
         )?;
