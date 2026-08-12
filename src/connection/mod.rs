@@ -17,7 +17,7 @@ pub enum Direction {
 pub struct Connection {
     pub remote_peer_id: PeerId,
     pub direction: Direction,
-    pub sender: std::sync::mpsc::Sender<Frame>,
+    pub sender: std::sync::mpsc::SyncSender<Frame>,
 }
 
 pub struct ConnectionReader {
@@ -64,7 +64,8 @@ impl Connection {
 
         let read_stream = stream.try_clone()?;
 
-        let (tx, rx) = std::sync::mpsc::channel::<Frame>();
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Frame>(64);
 
         let remote_addr_clone = remote_addr;
         std::thread::spawn(move || {
