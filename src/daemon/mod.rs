@@ -1,7 +1,12 @@
 pub mod control;
 
-use std::io::{BufRead, BufReader, Error, Write};
+use std::fs::{Permissions, create_dir_all, remove_file, set_permissions};
+use std::io::{BufRead, BufReader, Error, ErrorKind::AddrInUse, Write};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::os::unix::{
+    fs::PermissionsExt,
+    net::{UnixListener, UnixStream},
+};
 use std::thread;
 
 use crate::config::Config;
@@ -32,12 +37,12 @@ pub fn run(config: Config) -> Result<(), Error> {
     let socket_path = Config::control_socket_path();
 
     if socket_path.exists() {
-        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+        if UnixStream::connect(&socket_path).is_ok() {
             let msg = format!("Daemon is already running on {:?}", socket_path);
             error!("{}", msg);
-            return Err(Error::new(std::io::ErrorKind::AddrInUse, msg));
+            return Err(Error::new(AddrInUse, msg));
         } else {
-            if let Err(e) = std::fs::remove_file(&socket_path) {
+            if let Err(e) = remove_file(&socket_path) {
                 error!("Failed to remove stale control socket: {}", e);
                 return Err(e);
             }
@@ -45,12 +50,11 @@ pub fn run(config: Config) -> Result<(), Error> {
     }
 
     if let Some(parent) = socket_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = create_dir_all(parent);
     }
 
-    let control_listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600));
+    let control_listener = UnixListener::bind(&socket_path)?;
+    let _ = set_permissions(&socket_path, Permissions::from_mode(0o600));
 
     info!("Control API listening on Unix socket {:?}", socket_path);
 
