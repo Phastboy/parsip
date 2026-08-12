@@ -17,18 +17,29 @@ pub struct ConnectionEntry {
     pub state: ConnectionState,
 }
 
+/// Internal state protected by a single mutex.
+/// Previously split across two `Arc<Mutex<_>>` (entries + peer_index),
+/// requiring two sequential lock acquisitions per `send` call and
+/// creating a TOCTOU window between them. A single lock eliminates
+/// both the extra contention and the window.
+struct Inner {
+    entries: HashMap<u64, ConnectionEntry>,
+    peer_index: HashMap<PeerId, u64>,
+}
+
 #[derive(Clone)]
 pub struct ConnectionManager {
-    entries: Arc<Mutex<HashMap<u64, ConnectionEntry>>>,
-    peer_index: Arc<Mutex<HashMap<PeerId, u64>>>,
+    inner: Arc<Mutex<Inner>>,
     next_conn_id: Arc<AtomicU64>,
 }
 
 impl ConnectionManager {
     pub fn new() -> Self {
         Self {
-            entries: Arc::new(Mutex::new(HashMap::new())),
-            peer_index: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(Mutex::new(Inner {
+                entries: HashMap::new(),
+                peer_index: HashMap::new(),
+            })),
             next_conn_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -44,20 +55,15 @@ impl ConnectionManager {
             state: ConnectionState::Established,
         };
 
-        let mut entries = self
-            .entries
+        let mut g = self
+            .inner
             .lock()
-            .map_err(|_| Error::other("entries lock poisoned"))?;
-        let mut index = self
-            .peer_index
-            .lock()
-            .map_err(|_| Error::other("peer_index lock poisoned"))?;
+            .map_err(|_| Error::other("connection manager lock poisoned"))?;
 
-        if let Some(&old_conn_id) = index.get(&their_id) {
-            let old_entry_exists = entries.contains_key(&old_conn_id);
+        if let Some(&old_conn_id) = g.peer_index.get(&their_id) {
+            let old_entry_exists = g.entries.contains_key(&old_conn_id);
             if old_entry_exists {
                 let local_wins_tie = my_id.to_bytes() > their_id.to_bytes();
-
                 let keep_new = if is_local_initiator {
                     local_wins_tie
                 } else {
@@ -69,10 +75,9 @@ impl ConnectionManager {
                         "Deduplication: keeping NEW {:?} connection to {:?}",
                         entry_direction, their_id
                     );
-                    entries.remove(&old_conn_id);
-                    // Insert new into index
-                    index.insert(their_id.clone(), conn_id);
-                    entries.insert(conn_id, entry);
+                    g.entries.remove(&old_conn_id);
+                    g.peer_index.insert(their_id.clone(), conn_id);
+                    g.entries.insert(conn_id, entry);
                     Ok(conn_id)
                 } else {
                     println!(
@@ -85,13 +90,13 @@ impl ConnectionManager {
                     ))
                 }
             } else {
-                index.insert(their_id.clone(), conn_id);
-                entries.insert(conn_id, entry);
+                g.peer_index.insert(their_id.clone(), conn_id);
+                g.entries.insert(conn_id, entry);
                 Ok(conn_id)
             }
         } else {
-            index.insert(their_id.clone(), conn_id);
-            entries.insert(conn_id, entry);
+            g.peer_index.insert(their_id.clone(), conn_id);
+            g.entries.insert(conn_id, entry);
             Ok(conn_id)
         }
     }
@@ -101,57 +106,46 @@ impl ConnectionManager {
     }
 
     pub fn remove(&self, conn_id: u64) {
-        if let Ok(mut entries) = self.entries.lock()
-            && let Some(mut entry) = entries.remove(&conn_id)
+        if let Ok(mut g) = self.inner.lock()
+            && let Some(mut entry) = g.entries.remove(&conn_id)
         {
             entry.state = ConnectionState::Closing;
             let peer_id = entry.connection.remote_peer_id.clone();
-            if let Ok(mut index) = self.peer_index.lock()
-                && matches!(index.get(&peer_id), Some(&id) if id == conn_id)
-            {
-                index.remove(&peer_id);
+            if matches!(g.peer_index.get(&peer_id), Some(&id) if id == conn_id) {
+                g.peer_index.remove(&peer_id);
             }
         }
     }
 
     pub fn send(&self, peer_id: &PeerId, message: &crate::protocol::Message) -> Result<(), Error> {
-        let conn_id = {
-            let index = self
-                .peer_index
-                .lock()
-                .map_err(|_| Error::other("peer_index lock poisoned"))?;
-            index.get(peer_id).copied()
+        let g = self
+            .inner
+            .lock()
+            .map_err(|_| Error::other("connection manager lock poisoned"))?;
+
+        let conn_id = match g.peer_index.get(peer_id).copied() {
+            Some(id) => id,
+            None => return Err(Error::new(ErrorKind::NotConnected, "Peer not connected")),
         };
 
-        let conn_sender = if let Some(id) = conn_id {
-            let mut entries = self
-                .entries
-                .lock()
-                .map_err(|_| Error::other("entries lock poisoned"))?;
-            if let Some(entry) = entries.get_mut(&id) {
-                Some(entry.connection.sender.clone())
-            } else {
-                None
-            }
-        } else {
-            None
+        let sender = match g.entries.get(&conn_id) {
+            Some(entry) => entry.connection.sender.clone(),
+            None => return Err(Error::new(ErrorKind::NotConnected, "Peer not connected")),
         };
 
-        if let Some(sender) = conn_sender {
-            let frame: crate::protocol::Frame = message.into();
-            return sender
-                .send(frame)
-                .map_err(|_| Error::new(ErrorKind::BrokenPipe, "Writer thread closed"));
-        }
+        // Drop the lock before the potentially-blocking channel send.
+        drop(g);
 
-        Err(Error::new(ErrorKind::NotConnected, "Peer not connected"))
+        let frame: crate::protocol::Frame = message.into();
+        sender
+            .send(frame)
+            .map_err(|_| Error::new(ErrorKind::BrokenPipe, "Writer thread closed"))
     }
 
     pub fn is_connected(&self, peer_id: &PeerId) -> bool {
-        if let Ok(index) = self.peer_index.lock() {
-            index.contains_key(peer_id)
-        } else {
-            false
-        }
+        self.inner
+            .lock()
+            .map(|g| g.peer_index.contains_key(peer_id))
+            .unwrap_or(false)
     }
 }
