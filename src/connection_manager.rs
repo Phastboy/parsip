@@ -69,9 +69,7 @@ impl ConnectionManager {
                         "Deduplication: keeping NEW {:?} connection to {:?}",
                         entry_direction, their_id
                     );
-                    if entries.remove(&old_conn_id).is_some() {
-                        // The old connection's writer thread will exit eventually
-                    }
+                    entries.remove(&old_conn_id);
                     // Insert new into index
                     index.insert(their_id.clone(), conn_id);
                     entries.insert(conn_id, entry);

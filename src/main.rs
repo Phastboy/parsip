@@ -20,6 +20,47 @@ mod random;
 mod request_tracker;
 mod resource;
 
+fn start_daemon(config: config::Config, parsip_dir: std::path::PathBuf, pid_file: std::path::PathBuf) {
+
+    let log_file_path = parsip_dir.join("daemon_out.log");
+    let err_file_path = parsip_dir.join("daemon_err.log");
+
+    let stdout = fs::File::create(&log_file_path).unwrap_or_else(|e| {
+        eprintln!("Error creating {}: {}", log_file_path.display(), e);
+        std::process::exit(1);
+    });
+    let stderr = fs::File::create(&err_file_path).unwrap_or_else(|e| {
+        eprintln!("Error creating {}: {}", err_file_path.display(), e);
+        std::process::exit(1);
+    });
+
+    let daemonize = daemonize::Daemonize::new()
+        .pid_file(&pid_file)
+        .chown_pid_file(true)
+        .working_directory(&parsip_dir)
+        .stdout(stdout)
+        .stderr(stderr);
+
+    println!("Starting parsip daemon in background...");
+    match daemonize.start() {
+        Ok(_) => {
+            if let Err(e) = daemon::run(config) {
+                error!("Daemon crashed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            let err_msg = e.to_string().to_lowercase();
+            if err_msg.contains("unable to lock") || err_msg.contains("already running") || err_msg.contains("lock") {
+                eprintln!("Daemon is already running.");
+            } else {
+                eprintln!("Error starting daemon: {}", e);
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
 fn stop_daemon(pid_file: &std::path::Path) -> bool {
     let pid_str = match std::fs::read_to_string(pid_file) {
         Ok(s) => s,
@@ -143,6 +184,9 @@ fn main() -> Result<(), Error> {
                 arg => {
                     if let Ok(p) = arg.parse::<u16>() {
                         config.listen_port = p;
+                    } else {
+                        eprintln!("Error: unrecognized argument or invalid port: {}", arg);
+                        std::process::exit(1);
                     }
                 }
             }
@@ -165,13 +209,8 @@ fn main() -> Result<(), Error> {
             let _ = WriteLogger::init(LevelFilter::Info, LogConfig::default(), log_file);
         }
 
-        let base = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let parsip_dir = base.join(".parsip");
+        let parsip_dir = config::Config::parsip_dir();
         let pid_file = parsip_dir.join("parsip.pid");
-        let log_file_path = parsip_dir.join("daemon_out.log");
-        let err_file_path = parsip_dir.join("daemon_err.log");
 
         if let Err(e) = fs::create_dir_all(&parsip_dir) {
             eprintln!("Error creating {}: {}", parsip_dir.display(), e);
@@ -180,40 +219,7 @@ fn main() -> Result<(), Error> {
 
         match cmd {
             "start" => {
-                let socket_path = config::Config::control_socket_path();
-                if socket_path.exists()
-                    && std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
-                {
-                    eprintln!("Daemon is already running.");
-                    std::process::exit(1);
-                }
-
-                let stdout = File::create(&log_file_path).unwrap_or_else(|e| {
-                    eprintln!("Error creating {}: {}", log_file_path.display(), e);
-                    std::process::exit(1);
-                });
-                let stderr = File::create(&err_file_path).unwrap_or_else(|e| {
-                    eprintln!("Error creating {}: {}", err_file_path.display(), e);
-                    std::process::exit(1);
-                });
-
-                let daemonize = daemonize::Daemonize::new()
-                    .pid_file(&pid_file)
-                    .chown_pid_file(true)
-                    .working_directory(base)
-                    .stdout(stdout)
-                    .stderr(stderr);
-
-                println!("Starting parsip daemon in background...");
-                match daemonize.start() {
-                    Ok(_) => {
-                        if let Err(e) = daemon::run(config) {
-                            error!("Daemon crashed: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                    Err(e) => eprintln!("Error, {}", e),
-                }
+                start_daemon(config, parsip_dir, pid_file);
             }
             "stop" => {
                 stop_daemon(&pid_file);
@@ -222,41 +228,7 @@ fn main() -> Result<(), Error> {
                 if !stop_daemon(&pid_file) {
                     std::process::exit(1);
                 }
-
-                let socket_path = config::Config::control_socket_path();
-                if socket_path.exists()
-                    && std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
-                {
-                    eprintln!("Daemon is already running.");
-                    std::process::exit(1);
-                }
-
-                let stdout = File::create(&log_file_path).unwrap_or_else(|e| {
-                    eprintln!("Error creating {}: {}", log_file_path.display(), e);
-                    std::process::exit(1);
-                });
-                let stderr = File::create(&err_file_path).unwrap_or_else(|e| {
-                    eprintln!("Error creating {}: {}", err_file_path.display(), e);
-                    std::process::exit(1);
-                });
-
-                let daemonize = daemonize::Daemonize::new()
-                    .pid_file(&pid_file)
-                    .chown_pid_file(true)
-                    .working_directory(base)
-                    .stdout(stdout)
-                    .stderr(stderr);
-
-                println!("Starting parsip daemon in background...");
-                match daemonize.start() {
-                    Ok(_) => {
-                        if let Err(e) = daemon::run(config) {
-                            error!("Daemon crashed: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                    Err(e) => eprintln!("Error, {}", e),
-                }
+                start_daemon(config, parsip_dir, pid_file);
             }
             _ => {
                 eprintln!("Unknown daemon command: {}", cmd);

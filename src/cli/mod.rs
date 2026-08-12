@@ -111,9 +111,9 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     let socket_path = crate::config::Config::control_socket_path();
     let mut stream = match std::os::unix::net::UnixStream::connect(&socket_path) {
         Ok(s) => s,
-        Err(_) => {
-            eprintln!("Failed to connect to daemon. Is 'parsip daemon' running?");
-            return Ok(());
+        Err(e) => {
+            eprintln!("Failed to connect to daemon. Is 'parsip daemon' running? Error: {}", e);
+            return Err(e);
         }
     };
 
