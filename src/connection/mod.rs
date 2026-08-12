@@ -1,7 +1,7 @@
 pub mod handshake;
 pub mod reader;
 
-use std::io::Error;
+use std::io::{Error, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ pub struct ConnectionReader {
 
 impl Connection {
     pub fn new(
-        mut stream: TcpStream,
+        stream: TcpStream,
         remote_addr: SocketAddr,
         remote_peer_id: PeerId,
         direction: Direction,
@@ -69,17 +69,52 @@ impl Connection {
 
         let remote_addr_clone = remote_addr;
         std::thread::spawn(move || {
+            // BufWriter coalesces multiple frame encodes into large kernel writes.
+            // Without this every rx.recv() → encode → write_vectored triggers a
+            // separate syscall per thread wakeup, which at 128KB/frame on a LAN
+            // produces ~6 frames/second due to scheduling latency alone.
+            let mut writer = std::io::BufWriter::with_capacity(256 * 1024, stream);
             let mut codec = LengthPrefixCodec;
-            while let Ok(frame) = rx.recv() {
-                if let Err(e) = codec.encode(&frame, &mut stream) {
+            loop {
+                let frame = match rx.recv() {
+                    Ok(f) => f,
+                    Err(_) => break, // Sender dropped — all senders gone, exit cleanly
+                };
+                if let Err(e) = codec.encode(&frame, &mut writer) {
                     eprintln!(
                         "Writer thread for {} exited due to error: {}",
                         remote_addr_clone, e
                     );
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
-                    break;
+                    let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                    return;
+                }
+                // Drain any immediately available frames from the channel to coalesce
+                // them into the same buffer before flushing to the kernel.
+                while let Ok(frame) = rx.try_recv() {
+                    if let Err(e) = codec.encode(&frame, &mut writer) {
+                        eprintln!(
+                            "Writer thread for {} exited due to error: {}",
+                            remote_addr_clone, e
+                        );
+                        let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                        return;
+                    }
+                }
+
+                // The channel is now transiently empty (burst is done). Flush the
+                // BufWriter to the kernel. This keeps latency low for control
+                // messages while still batching bulk data frames.
+                if let Err(e) = writer.flush() {
+                    eprintln!(
+                        "Writer thread for {} flush error: {}",
+                        remote_addr_clone, e
+                    );
+                    let _ = writer.into_inner().map(|s| s.shutdown(std::net::Shutdown::Both));
+                    return;
                 }
             }
+            // Channel closed cleanly — flush remaining buffered data before exit
+            let _ = writer.flush();
         });
 
         let writer = Self {
