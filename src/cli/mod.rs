@@ -148,7 +148,6 @@ pub fn run(args: &[String]) -> Result<(), Error> {
             }
             ControlResponse::TransferInitiated => {
                 println!("Transfer initiated...");
-                break;
             }
             ControlResponse::TransferProgress { bytes, total, mbps } => {
                 use std::io::Write;
