@@ -69,7 +69,6 @@ impl TransferManager {
             .filter_map(|id| self.transfers.remove(&id))
             .collect()
     }
-
 }
 
 #[cfg(test)]
