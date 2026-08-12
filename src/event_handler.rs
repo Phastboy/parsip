@@ -360,8 +360,10 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                     last_report_bytes: 0,
                 });
 
+                let mut cli_tx = None;
                 if let Some(sender) = ctx.req_tracker.get(request_id) {
                     let _ = sender.send(ControlResponse::TransferInitiated);
+                    cli_tx = Some(sender.clone());
                 }
 
                 let event_tx_clone = ctx.peer.event_tx.clone();
@@ -372,6 +374,9 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                     if let Ok(mut file) = std::fs::File::open(file_path) {
                         let mut buffer = vec![0u8; 128 * 1024];
                         let mut offset = 0u64;
+                        let mut last_report_time = std::time::Instant::now();
+                        let mut last_report_bytes = 0u64;
+                        
                         loop {
                             match file.read(&mut buffer) {
                                 Ok(0) => break, // EOF
@@ -394,6 +399,21 @@ fn handle_message(ctx: &mut DaemonContext, peer_id: crate::identity::PeerId, msg
                                         return;
                                     }
                                     offset += bytes_read as u64;
+                                    
+                                    if let Some(tx) = &cli_tx {
+                                        let elapsed_ms = last_report_time.elapsed().as_millis();
+                                        if elapsed_ms > 200 {
+                                            let bytes_since_last = offset - last_report_bytes;
+                                            let mbps = (bytes_since_last as f64 / 1_000_000.0) / (elapsed_ms as f64 / 1000.0);
+                                            let _ = tx.send(ControlResponse::TransferProgress {
+                                                bytes: offset,
+                                                total: size,
+                                                mbps,
+                                            });
+                                            last_report_time = std::time::Instant::now();
+                                            last_report_bytes = offset;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     let _ = event_tx_clone.send(PeerEvent::UploadComplete {
