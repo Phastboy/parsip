@@ -11,7 +11,7 @@ use crate::event_handler::{AliasRegistry, handle_event};
 use crate::identity::Identity;
 use crate::peer::Peer;
 use crate::request_tracker::RequestTracker;
-use crate::resource::{DownloadManager, LocalResourceStore};
+use crate::resource::DownloadManager;
 use log::{error, info};
 
 pub fn run(config: Config) -> Result<(), Error> {
@@ -26,7 +26,8 @@ pub fn run(config: Config) -> Result<(), Error> {
     // Initialize RequestTracker
     let mut request_tracker = RequestTracker::new();
 
-    let mut resource_store = LocalResourceStore::new(config.shared_dir.clone());
+    // Maps request_id -> source file path (for pending uploads)
+    let mut pending_uploads: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
     let mut download_mgr = DownloadManager::new(config.downloads_dir.clone());
     let mut aliases = AliasRegistry::new();
     let mut transfer_mgr = crate::resource::TransferManager::new();
@@ -76,9 +77,8 @@ pub fn run(config: Config) -> Result<(), Error> {
                                     | control::ControlResponse::Error(_)
                                     | control::ControlResponse::ScanResults(_)
                                     | control::ControlResponse::PeersList(_)
-                                    | control::ControlResponse::ResourceList(_)
-                                    | control::ControlResponse::ResourceAdded { .. }
-                                    | control::ControlResponse::DownloadComplete { .. }
+                                    | control::ControlResponse::TransferInitiated
+                                    | control::ControlResponse::TransferComplete { .. }
                             );
                             if let Ok(resp_json) = serde_json::to_string(&resp)
                                 && stream
@@ -103,7 +103,7 @@ pub fn run(config: Config) -> Result<(), Error> {
         let mut ctx = crate::event_handler::DaemonContext {
             config: &config,
             peer: &peer,
-            store: &mut resource_store,
+            pending_uploads: &mut pending_uploads,
             download_mgr: &mut download_mgr,
             transfer_mgr: &mut transfer_mgr,
             aliases: &mut aliases,

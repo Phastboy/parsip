@@ -1,5 +1,5 @@
 use crate::protocol::frame::Frame;
-use crate::protocol::message::types::{Message, ResourceInfo};
+use crate::protocol::message::types::Message;
 use std::io::{Error, ErrorKind};
 
 fn err(msg: &str) -> Error {
@@ -33,121 +33,61 @@ impl TryFrom<Frame> for Message {
                 sig.copy_from_slice(p);
                 Ok(Message::HelloProof { signature: sig })
             }
-            3 => parse_list_resources(p),
-            4 => parse_resource_list(p),
-            5 => parse_download_resource(p),
-            6 => parse_resource_chunk(frame.payload),
-            7 => parse_resource_end(p),
+            3 => parse_send_resource_request(p),
+            4 => parse_send_resource_accept(p),
+            5 => parse_resource_chunk(frame.payload),
+            6 => parse_resource_end(p),
             _ => Err(err("Unknown msg type")),
         }
     }
 }
 
-use crate::protocol::message::types::ResourceId;
+fn parse_send_resource_request(p: &[u8]) -> Result<Message, Error> {
+    if p.len() < 16 {
+        return Err(err("Bad SendResourceRequest"));
+    }
+    let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
+    let size = u64::from_be_bytes(p[4..12].try_into().unwrap());
+    let name_len = u32::from_be_bytes(p[12..16].try_into().unwrap()) as usize;
+    if p.len() < 16 + name_len {
+        return Err(err("Bad SendResourceRequest Name Length"));
+    }
+    let name = String::from_utf8(p[16..16 + name_len].to_vec()).map_err(|_| err("Bad UTF8"))?;
+    Ok(Message::SendResourceRequest {
+        request_id,
+        name,
+        size,
+    })
+}
 
-fn parse_list_resources(p: &[u8]) -> Result<Message, Error> {
+fn parse_send_resource_accept(p: &[u8]) -> Result<Message, Error> {
     if p.len() != 4 {
-        return Err(err("Bad ListResources"));
+        return Err(err("Bad SendResourceAccept"));
     }
     let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
-    Ok(Message::ListResources { request_id })
-}
-
-fn parse_resource_list(p: &[u8]) -> Result<Message, Error> {
-    let mut off = 0;
-    if off + 4 > p.len() {
-        return Err(err("Bad List"));
-    }
-    let request_id = u32::from_be_bytes(p[off..off + 4].try_into().unwrap());
-    off += 4;
-
-    if off + 4 > p.len() {
-        return Err(err("Bad List"));
-    }
-    let count = u32::from_be_bytes(p[off..off + 4].try_into().unwrap());
-    off += 4;
-
-    if count as usize > (p.len() - off) / 44 {
-        return Err(err("Bad List"));
-    }
-
-    let mut resources = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        if off + 32 > p.len() {
-            return Err(err("Bad List"));
-        }
-        let mut id_bytes = [0u8; 32];
-        id_bytes.copy_from_slice(&p[off..off + 32]);
-        let id = ResourceId(id_bytes);
-        off += 32;
-
-        if off + 4 > p.len() {
-            return Err(err("Bad List"));
-        }
-        let nl = u32::from_be_bytes(p[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-
-        if off + nl > p.len() {
-            return Err(err("Bad List"));
-        }
-        let name = String::from_utf8(p[off..off + nl].to_vec()).map_err(|_| err("Bad UTF8"))?;
-        off += nl;
-
-        if off + 8 > p.len() {
-            return Err(err("Bad List"));
-        }
-        let size = u64::from_be_bytes(p[off..off + 8].try_into().unwrap());
-        off += 8;
-
-        resources.push(ResourceInfo { id, name, size });
-    }
-    Ok(Message::ResourceList {
-        request_id,
-        resources,
-    })
-}
-
-fn parse_download_resource(p: &[u8]) -> Result<Message, Error> {
-    if p.len() != 36 {
-        return Err(err("Bad DownloadResource"));
-    }
-    let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
-    let mut id_bytes = [0u8; 32];
-    id_bytes.copy_from_slice(&p[4..36]);
-    Ok(Message::DownloadResource {
-        request_id,
-        id: ResourceId(id_bytes),
-    })
+    Ok(Message::SendResourceAccept { request_id })
 }
 
 fn parse_resource_chunk(mut payload: Vec<u8>) -> Result<Message, Error> {
-    if payload.len() < 44 {
+    if payload.len() < 12 {
         return Err(err("Bad ResourceChunk"));
     }
     let request_id = u32::from_be_bytes(payload[0..4].try_into().unwrap());
-    let mut id_bytes = [0u8; 32];
-    id_bytes.copy_from_slice(&payload[4..36]);
-    let offset = u64::from_be_bytes(payload[36..44].try_into().unwrap());
+    let offset = u64::from_be_bytes(payload[4..12].try_into().unwrap());
     
-    payload.drain(0..44);
+    payload.drain(0..12);
     let data = payload;
     Ok(Message::ResourceChunk {
         request_id,
-        id: ResourceId(id_bytes),
         offset,
         data,
     })
 }
 
 fn parse_resource_end(p: &[u8]) -> Result<Message, Error> {
-    if p.len() != 36 {
+    if p.len() != 4 {
         return Err(err("Bad ResourceEnd"));
     }
     let request_id = u32::from_be_bytes(p[0..4].try_into().unwrap());
-    let mut id_bytes = [0u8; 32];
-    id_bytes.copy_from_slice(&p[4..36]);
-    Ok(Message::ResourceEnd {
-        request_id,
-        id: ResourceId(id_bytes),
-    })
+    Ok(Message::ResourceEnd { request_id })
 }

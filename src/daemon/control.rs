@@ -1,5 +1,4 @@
 use crate::identity::PeerId;
-use crate::protocol::message::types::ResourceId;
 use serde::{Deserialize, Serialize};
 
 /// Represents a message sent from the CLI Client to the Daemon over the local TCP control socket.
@@ -10,15 +9,9 @@ pub enum ControlMessage {
         alias: String,
     },
     ListPeers,
-    ListResources {
+    SendResource {
         peer_alias: String,
-    },
-    GetResource {
-        peer_alias: String,
-        resource_alias: String,
-    },
-    AddResource {
-        path: String,
+        file_path: String,
     },
 }
 
@@ -29,10 +22,9 @@ pub enum ControlResponse {
     Error(String),
     ScanResults(Vec<DiscoveredPeerInfo>),
     PeersList(Vec<ConnectedPeerInfo>),
-    ResourceList(Vec<ResourceInfo>),
-    ResourceAdded { alias: String, id: ResourceId },
-    DownloadProgress { bytes: u64, total: u64, mbps: f64 },
-    DownloadComplete { bytes: u64, elapsed_secs: f64 },
+    TransferInitiated,
+    TransferProgress { bytes: u64, total: u64, mbps: f64 },
+    TransferComplete { bytes: u64, elapsed_secs: f64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,10 +40,4 @@ pub struct ConnectedPeerInfo {
     pub peer_id: PeerId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceInfo {
-    pub alias: String,
-    pub id: ResourceId,
-    pub name: String,
-    pub size: u64,
-}
+

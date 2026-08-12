@@ -74,32 +74,14 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 alias: args[2].clone(),
             }
         }
-        "list" => {
-            if args.len() < 3 {
-                println!("Usage: parsip list <peer_alias>");
-                return Ok(());
-            }
-            ControlMessage::ListResources {
-                peer_alias: args[2].clone(),
-            }
-        }
-        "get" => {
+        "send" => {
             if args.len() < 4 {
-                println!("Usage: parsip get <peer_alias> <resource_alias>");
+                println!("Usage: parsip send <peer_alias> <file_path>");
                 return Ok(());
             }
-            ControlMessage::GetResource {
+            ControlMessage::SendResource {
                 peer_alias: args[2].clone(),
-                resource_alias: args[3].clone(),
-            }
-        }
-        "add" => {
-            if args.len() < 3 {
-                println!("Usage: parsip add <file_path>");
-                return Ok(());
-            }
-            ControlMessage::AddResource {
-                path: args[2].clone(),
+                file_path: args[3].clone(),
             }
         }
         _ => {
@@ -164,31 +146,21 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 }
                 break;
             }
-            ControlResponse::ResourceList(resources) => {
-                if resources.is_empty() {
-                    println!("No resources available.");
-                } else {
-                    for r in resources {
-                        println!("  {:<4} {:<30} {}", r.alias, r.name, format_size(r.size));
-                    }
-                }
+            ControlResponse::TransferInitiated => {
+                println!("Transfer initiated...");
                 break;
             }
-            ControlResponse::ResourceAdded { alias, id } => {
-                println!("Added resource -> {:?} (alias: {})", id, alias);
-                break;
-            }
-            ControlResponse::DownloadProgress { bytes, total, mbps } => {
+            ControlResponse::TransferProgress { bytes, total, mbps } => {
                 use std::io::Write;
                 print!(
-                    "\rDownloading... {} / {} ({:.2} MB/s)",
+                    "\rTransferring... {} / {} ({:.2} MB/s)",
                     format_size(bytes),
                     format_size(total),
                     mbps
                 );
                 let _ = std::io::stdout().flush();
             }
-            ControlResponse::DownloadComplete {
+            ControlResponse::TransferComplete {
                 bytes,
                 elapsed_secs,
             } => {
@@ -199,7 +171,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                     0.0
                 };
                 println!(
-                    "\nDownloaded {} in {:.2}s ({:.2} MB/s)",
+                    "\nTransferred {} in {:.2}s ({:.2} MB/s)",
                     format_size(bytes),
                     elapsed_secs,
                     mb_per_sec

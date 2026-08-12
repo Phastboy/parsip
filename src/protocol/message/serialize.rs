@@ -13,50 +13,38 @@ impl From<&Message> for Frame {
                 p
             }
             Message::HelloProof { signature } => signature.to_vec(),
-            Message::ListResources { request_id } => {
+            Message::SendResourceRequest {
+                request_id,
+                name,
+                size,
+            } => {
+                let name_bytes = name.as_bytes();
+                let mut p = Vec::with_capacity(4 + 8 + 4 + name_bytes.len());
+                p.extend_from_slice(&request_id.to_be_bytes());
+                p.extend_from_slice(&size.to_be_bytes());
+                p.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
+                p.extend_from_slice(name_bytes);
+                p
+            }
+            Message::SendResourceAccept { request_id } => {
                 let mut p = Vec::with_capacity(4);
                 p.extend_from_slice(&request_id.to_be_bytes());
                 p
             }
-            Message::ResourceList {
-                request_id,
-                resources,
-            } => {
-                let mut p = Vec::new();
-                p.extend_from_slice(&request_id.to_be_bytes());
-                p.extend_from_slice(&(resources.len() as u32).to_be_bytes());
-                for r in resources {
-                    p.extend_from_slice(&r.id.0); // 32 bytes
-                    let name_bytes = r.name.as_bytes();
-                    p.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
-                    p.extend_from_slice(name_bytes);
-                    p.extend_from_slice(&r.size.to_be_bytes());
-                }
-                p
-            }
-            Message::DownloadResource { request_id, id } => {
-                let mut p = Vec::with_capacity(4 + 32);
-                p.extend_from_slice(&request_id.to_be_bytes());
-                p.extend_from_slice(&id.0);
-                p
-            }
             Message::ResourceChunk {
                 request_id,
-                id,
                 offset,
                 data,
             } => {
-                let mut p = Vec::with_capacity(4 + 32 + 8 + data.len());
+                let mut p = Vec::with_capacity(4 + 8 + data.len());
                 p.extend_from_slice(&request_id.to_be_bytes());
-                p.extend_from_slice(&id.0);
                 p.extend_from_slice(&offset.to_be_bytes());
                 p.extend_from_slice(data);
                 p
             }
-            Message::ResourceEnd { request_id, id } => {
-                let mut p = Vec::with_capacity(4 + 32);
+            Message::ResourceEnd { request_id } => {
+                let mut p = Vec::with_capacity(4);
                 p.extend_from_slice(&request_id.to_be_bytes());
-                p.extend_from_slice(&id.0);
                 p
             }
         };

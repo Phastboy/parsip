@@ -1,12 +1,11 @@
 use crate::identity::PeerId;
-use crate::protocol::message::types::ResourceId;
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Transfer {
     pub request_id: u32,
     pub peer_id: PeerId,
-    pub resource_id: ResourceId,
     pub bytes_transferred: u64,
     pub bytes_total: u64,
     pub start_time: std::time::Instant,
@@ -81,7 +80,6 @@ mod tests {
         let t = Transfer {
             request_id: 1,
             peer_id: PeerId([0; 32]),
-            resource_id: ResourceId([1; 32]),
             bytes_transferred: 0,
             bytes_total: 1000,
             start_time: std::time::Instant::now(),
@@ -107,7 +105,6 @@ mod tests {
         let t1 = Transfer {
             request_id: 1,
             peer_id: p1.clone(),
-            resource_id: ResourceId([1; 32]),
             bytes_transferred: 0,
             bytes_total: 100,
             start_time: std::time::Instant::now(),

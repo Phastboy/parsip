@@ -1,14 +1,6 @@
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ResourceId(pub [u8; 32]);
 
-#[derive(Debug, Clone)]
-pub struct ResourceInfo {
-    pub id: ResourceId,
-    pub name: String,
-    pub size: u64,
-}
+
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -19,26 +11,21 @@ pub enum Message {
     HelloProof {
         signature: [u8; 64],
     },
-    ListResources {
+    SendResourceRequest {
         request_id: u32,
+        name: String,
+        size: u64,
     },
-    ResourceList {
+    SendResourceAccept {
         request_id: u32,
-        resources: Vec<ResourceInfo>,
-    },
-    DownloadResource {
-        request_id: u32,
-        id: ResourceId,
     },
     ResourceChunk {
         request_id: u32,
-        id: ResourceId,
         offset: u64,
         data: Vec<u8>,
     },
     ResourceEnd {
         request_id: u32,
-        id: ResourceId,
     },
 }
 
@@ -47,11 +34,10 @@ impl Message {
         match self {
             Message::Hello { .. } => 1,
             Message::HelloProof { .. } => 2,
-            Message::ListResources { .. } => 3,
-            Message::ResourceList { .. } => 4,
-            Message::DownloadResource { .. } => 5,
-            Message::ResourceChunk { .. } => 6,
-            Message::ResourceEnd { .. } => 7,
+            Message::SendResourceRequest { .. } => 3,
+            Message::SendResourceAccept { .. } => 4,
+            Message::ResourceChunk { .. } => 5,
+            Message::ResourceEnd { .. } => 6,
         }
     }
 }

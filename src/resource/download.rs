@@ -5,13 +5,12 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::thread::JoinHandle;
 
-use crate::protocol::{ResourceInfo, message::types::ResourceId};
-
 /// A chunk of data or a termination signal for the writer thread.
 type WriteCmd = Option<Vec<u8>>;
 
 pub struct ActiveDownload {
-    pub info: ResourceInfo,
+    pub name: String,
+    pub size: u64,
     /// Bytes received so far (updated immediately when chunk arrives,
     /// before the writer thread has necessarily flushed them to disk).
     pub received_bytes: u64,
@@ -32,7 +31,7 @@ pub struct PendingFinalization {
 }
 
 pub struct DownloadManager {
-    downloads: HashMap<ResourceId, ActiveDownload>,
+    downloads: HashMap<u32, ActiveDownload>,
     downloads_dir: PathBuf,
 }
 
@@ -44,16 +43,22 @@ impl DownloadManager {
         }
     }
 
-    pub fn start_download(&mut self, info: &ResourceInfo) -> Result<(), Error> {
+    pub fn start_download(&mut self, request_id: u32, name: &str, size: u64) -> Result<(), Error> {
         // Prevent duplicate downloads silently overwriting each other
-        if self.downloads.contains_key(&info.id) {
+        if self.downloads.contains_key(&request_id) {
             return Err(Error::new(
                 ErrorKind::AlreadyExists,
-                "Download already in progress for this resource",
+                "Download already in progress for this request",
             ));
         }
 
-        let temp_path = self.downloads_dir.join(format!(".tmp_{:?}", info.id));
+        // Sanitize the filename to prevent directory traversal (e.g. ../../etc/passwd)
+        let sanitized_name = std::path::Path::new(name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed_file");
+            
+        let temp_path = self.downloads_dir.join(format!(".tmp_{}", request_id));
         let temp_file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -86,22 +91,23 @@ impl DownloadManager {
         });
 
         let download = ActiveDownload {
-            info: info.clone(),
+            name: sanitized_name.to_string(),
+            size,
             received_bytes: 0,
             temp_path,
             writer_tx: tx,
             writer_handle: Some(handle),
         };
 
-        self.downloads.insert(info.id.clone(), download);
+        self.downloads.insert(request_id, download);
         Ok(())
     }
 
     /// Forward a chunk to the writer thread. Takes ownership of `data` to
     /// avoid a copy (the Vec is moved directly into the channel).
     /// Returns `Ok(true)` when all expected bytes have been received.
-    pub fn process_chunk(&mut self, id: &ResourceId, data: Vec<u8>) -> Result<bool, Error> {
-        if let Some(download) = self.downloads.get_mut(id) {
+    pub fn process_chunk(&mut self, request_id: u32, data: Vec<u8>) -> Result<bool, Error> {
+        if let Some(download) = self.downloads.get_mut(&request_id) {
             let len = data.len() as u64;
             if download.writer_tx.send(Some(data)).is_err() {
                 return Err(Error::new(
@@ -110,7 +116,7 @@ impl DownloadManager {
                 ));
             }
             download.received_bytes += len;
-            return Ok(download.received_bytes >= download.info.size);
+            return Ok(download.received_bytes >= download.size);
         }
         Err(Error::new(ErrorKind::NotFound, "Download not found"))
     }
@@ -120,12 +126,12 @@ impl DownloadManager {
     ///
     /// **This method never blocks.** The join + rename happen in the
     /// returned handle so the event-loop thread is never stalled.
-    pub fn complete_download(&mut self, id: &ResourceId) -> Result<Option<PendingFinalization>, Error> {
-        if let Some(mut download) = self.downloads.remove(id) {
+    pub fn complete_download(&mut self, request_id: u32) -> Result<Option<PendingFinalization>, Error> {
+        if let Some(mut download) = self.downloads.remove(&request_id) {
             // Signal the writer to flush and exit
             let _ = download.writer_tx.send(None);
 
-            let final_path = self.downloads_dir.join(&download.info.name);
+            let final_path = self.downloads_dir.join(&download.name);
             let pending = download.writer_handle.take().map(|handle| PendingFinalization {
                 handle,
                 temp_path: download.temp_path,
@@ -139,8 +145,8 @@ impl DownloadManager {
 
     /// Cancel a download mid-flight (e.g. peer disconnected) and delete the temp file.
     /// Does NOT join the writer thread — lets it exit naturally in the background.
-    pub fn cancel_download(&mut self, id: &ResourceId) -> Result<(), Error> {
-        if let Some(mut download) = self.downloads.remove(id) {
+    pub fn cancel_download(&mut self, request_id: u32) -> Result<(), Error> {
+        if let Some(mut download) = self.downloads.remove(&request_id) {
             // Drop the sender to close the channel. The writer thread sees
             // Err on recv() and exits. We do NOT join — it may have pending
             // chunks in its buffer; draining them would waste time on a cancel.

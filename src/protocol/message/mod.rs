@@ -2,13 +2,12 @@ pub mod deserialize;
 pub mod serialize;
 pub mod types;
 
-pub use types::{Message, ResourceInfo};
+pub use types::Message;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::Frame;
-    use crate::protocol::message::types::ResourceId;
 
     #[test]
     fn test_hello_serialization() {
@@ -34,29 +33,25 @@ mod tests {
     }
 
     #[test]
-    fn test_resource_list_serialization() {
-        let r1 = ResourceInfo {
-            id: ResourceId([3u8; 32]),
+    fn test_send_resource_request_serialization() {
+        let msg = Message::SendResourceRequest {
+            request_id: 42,
             name: "test.txt".to_string(),
             size: 1024,
         };
-        let msg = Message::ResourceList {
-            request_id: 42,
-            resources: vec![r1.clone()],
-        };
         let frame: Frame = (&msg).into();
-        assert_eq!(frame.message_type, 4);
+        assert_eq!(frame.message_type, 3); // 3 is SendResourceRequest
 
         let decoded = Message::try_from(frame).unwrap();
         match decoded {
-            Message::ResourceList {
+            Message::SendResourceRequest {
                 request_id,
-                resources,
+                name,
+                size,
             } => {
                 assert_eq!(request_id, 42);
-                assert_eq!(resources.len(), 1);
-                assert_eq!(resources[0].name, r1.name);
-                assert_eq!(resources[0].size, r1.size);
+                assert_eq!(name, "test.txt");
+                assert_eq!(size, 1024);
             }
             _ => panic!("Wrong message type"),
         }
