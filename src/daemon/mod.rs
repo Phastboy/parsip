@@ -1,6 +1,6 @@
 pub mod control;
 
-use std::fs::{create_dir_all, remove_file, set_permissions, Permissions};
+use std::fs::{Permissions, create_dir_all, remove_file, set_permissions};
 use std::io::{BufRead, BufReader, Error, Write};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::os::unix::{fs::PermissionsExt, net::UnixListener};
@@ -33,7 +33,9 @@ pub fn run(config: Config) -> Result<(), Error> {
 
     let socket_path = Config::control_socket_path();
 
-    if socket_path.exists() && let Err(e) = remove_file(&socket_path) {
+    if socket_path.exists()
+        && let Err(e) = remove_file(&socket_path)
+    {
         error!("Failed to remove stale control socket: {}", e);
         return Err(e);
     }

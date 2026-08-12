@@ -263,7 +263,6 @@ fn handle_control(ctx: &mut DaemonContext, cmd: ControlMessage, sender: Sender<C
                                 request_id,
                                 peer_id: peer_id.clone(),
                                 resource_id: res_id.clone(),
-                                is_download: true,
                                 bytes_transferred: 0,
                                 bytes_total: info.size,
                                 start_time: std::time::Instant::now(),

@@ -20,8 +20,11 @@ mod random;
 mod request_tracker;
 mod resource;
 
-fn start_daemon(config: config::Config, parsip_dir: std::path::PathBuf, pid_file: std::path::PathBuf) {
-
+fn start_daemon(
+    config: config::Config,
+    parsip_dir: std::path::PathBuf,
+    pid_file: std::path::PathBuf,
+) {
     let log_file_path = parsip_dir.join("daemon_out.log");
     let err_file_path = parsip_dir.join("daemon_err.log");
 
@@ -51,7 +54,10 @@ fn start_daemon(config: config::Config, parsip_dir: std::path::PathBuf, pid_file
         }
         Err(e) => {
             let err_msg = e.to_string().to_lowercase();
-            if err_msg.contains("unable to lock") || err_msg.contains("already running") || err_msg.contains("lock") {
+            if err_msg.contains("unable to lock")
+                || err_msg.contains("already running")
+                || err_msg.contains("lock")
+            {
                 eprintln!("Daemon is already running.");
             } else {
                 eprintln!("Error starting daemon: {}", e);
