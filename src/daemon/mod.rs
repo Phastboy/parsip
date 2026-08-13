@@ -78,7 +78,6 @@ pub fn run(config: Config) -> Result<(), Error> {
                                     | control::ControlResponse::Error(_)
                                     | control::ControlResponse::ScanResults(_)
                                     | control::ControlResponse::PeersList(_)
-                                    | control::ControlResponse::TransferInitiated
                                     | control::ControlResponse::TransferComplete { .. }
                             );
                             if let Ok(resp_json) = serde_json::to_string(&resp)
